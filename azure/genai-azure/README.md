@@ -59,6 +59,8 @@
 *   **Azure Automation:**
     VMを定期的に起動 / 停止します。
 
+本リポジトリではvLLMモデルの例として、plamo-2-translate を用いています。 このモデルは [plamo-community-license](https://plamo.preferredai.jp/info/plamo-community-license-en)の下で提供されていますので、利用の際はご留意ください。
+
 **OpenAI API群**
 * **Azure Functions**
     Azure OpenAIの一連のAPIを実行し、処理全体をオーケストレートするサーバーレス実行環境です。Azure OpenAI への通信については、プライベートエンドポイント経由で閉域アクセスとなります。

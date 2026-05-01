@@ -55,6 +55,13 @@ def get_env_param(name: str, default, converter):
         return default
 
 
+_DEFAULT_SYSTEM_INSTRUCTION = (
+    "You are a friendly and helpful assistant. "
+    "Ensure answers are complete unless the user requests brevity. "
+    "When generating code, include explanations."
+)
+
+
 def load_gemini_config() -> GeminiConfig:
     """Loads configuration from environment variables."""
     # The project where this Cloud Run job is running
@@ -94,7 +101,7 @@ def load_gemini_config() -> GeminiConfig:
         candidate_count=get_env_param(GENERATION_CANDIDATE_COUNT, 1, int),
         system_instruction=get_env_param(
             GENERATION_SYSTEM_INSTRUCTION,
-            "You are a friendly and helpful assistant. Ensure answers are complete unless the user requests brevity. When generating code, include explanations.",
+            _DEFAULT_SYSTEM_INSTRUCTION,
             str,
         ),
         pass_file_by_uri=pass_file_by_uri,

@@ -8,10 +8,9 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import requests
+from gemini_config import GeminiConfig
 from google.cloud import storage
 from google.genai import types
-
-from gemini_config import GeminiConfig
 from schemas import (
     Grounding,
     HarmBlockThreshold,
@@ -256,7 +255,7 @@ def call_gemini_api_structured(
         )
 
         logger.info(
-            f"Structured config created - response_mime_type: {structured_config.response_mime_type}"
+            f"Structured config created - response_mime_type: {structured_config.response_mime_type}"  # noqa: E501
         )
 
         response = genai_client.models.generate_content(
@@ -410,19 +409,25 @@ def _decode_response_body(resp: requests.Response) -> str:
         return raw.decode(encoding, errors="replace")
 
 
-def _fetch_page_info(url: str, fallback_domain: str) -> tuple[str, str]:
+def _fetch_page_info(url: str, fallback_domain: str, *, trusted: bool = True) -> tuple[str, str]:
     """Follow a redirect URL and return (final_url, page_title).
 
     Falls back to (https://domain, domain) on any failure.
+    When trusted=False, validates that the target is not a private IP (SSRF protection).
     """
     fallback_url = f"https://{fallback_domain}" if fallback_domain else url
     try:
-        resp = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=6,
-            allow_redirects=True,
-        )
+        if trusted:
+            resp = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=6,
+                allow_redirects=True,
+            )
+        else:
+            from url_validator import safe_get
+
+            resp = safe_get(url, max_redirects=5, timeout=6)
         final_url = resp.url
         body = _decode_response_body(resp)
         m = re.search(r"<title[^>]*>(.*?)</title>", body, re.IGNORECASE | re.DOTALL)

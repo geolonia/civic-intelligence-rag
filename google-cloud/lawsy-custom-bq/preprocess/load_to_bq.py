@@ -94,10 +94,8 @@ def format_article_text(article_element):
             title_elements = [el for el in element if el.tag in title_tags]
             sentence_elements = [el for el in element if el.tag in sentence_tags]
 
-            for el in title_elements:
-                parts.append(get_full_text(el))
-            for el in sentence_elements:
-                parts.append(get_full_text(el))
+            parts.extend(get_full_text(el) for el in title_elements)
+            parts.extend(get_full_text(el) for el in sentence_elements)
 
             if parts:
                 lines.append("　" * level + "　".join(parts))
@@ -213,23 +211,22 @@ def process_file(file_path):
 
         article_chunks = parse_law_xml(file_path)
 
-        rows = []
-        for chunk in article_chunks:
-            rows.append(
-                {
-                    "law_id": law_id,
-                    "law_num": chunk["law_num"],
-                    "law_title": chunk["law_title"],
-                    "unique_anchor": chunk["unique_anchor"],
-                    "anchor": chunk["anchor"],
-                    "content": chunk["content"],
-                    "article_summary": chunk["article_summary"],
-                    "era": era,
-                    "year": year,
-                    "law_type": law_type,
-                    "promulgate_date": promulgate_date,
-                }
-            )
+        rows = [
+            {
+                "law_id": law_id,
+                "law_num": chunk["law_num"],
+                "law_title": chunk["law_title"],
+                "unique_anchor": chunk["unique_anchor"],
+                "anchor": chunk["anchor"],
+                "content": chunk["content"],
+                "article_summary": chunk["article_summary"],
+                "era": era,
+                "year": year,
+                "law_type": law_type,
+                "promulgate_date": promulgate_date,
+            }
+            for chunk in article_chunks
+        ]
         return rows, file_path
     except Exception as e:
         print(f"ERROR: Error processing file {file_path}: {e}", file=sys.stderr)

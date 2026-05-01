@@ -61,11 +61,11 @@ def _filter_references_by_citations(report_text: str, all_references: list) -> l
     """レポート内で実際に引用された参照のみを抽出する（元の番号を保持）"""
     raw_nums = re.findall(r"\[(\d+(?:,\s*\d+)*)\]", report_text)
     cited_indices = sorted({int(n.strip()) for group in raw_nums for n in group.split(",")})
-    filtered_refs = []
-    for i in cited_indices:
-        if 1 <= i <= len(all_references):
-            # 元のインデックスを保持するため、タプルで格納
-            filtered_refs.append((i, all_references[i - 1]))  # (original_index, reference)
+    filtered_refs = [
+        (i, all_references[i - 1])  # (original_index, reference)
+        for i in cited_indices
+        if 1 <= i <= len(all_references)
+    ]
     return filtered_refs
 
 
@@ -75,20 +75,31 @@ def _estimate_law_names(query, genai_client, app_config, usage_tracker) -> tuple
     logger.info("Estimating law names with web grounding and fallback parsing...")
     estimated_law_names = []
 
+    # クエリにURLが含まれる場合は url_context も有効にしてページ内容を読ませる
+    has_url = _URL_IN_QUERY_PATTERN.search(query)
+    grounding_tools = "web_search,url_context" if has_url else "web_search"
+    if has_url:
+        logger.info("URL detected in query. Enabling url_context for law name estimation.")
+
     try:
         # Web grounding でJSON出力を指示
         logger.info("Web grounding with JSON instruction...")
         today_str = date.today().isoformat()
+        url_context_instruction = (
+            "クエリにURLが含まれる場合はそのURLの内容を必ず読み取り、内容に基づいて法令名を特定すること。"
+            if has_url
+            else ""
+        )
         grounding_request = RequestBody(
-            input_text=f"以下のクエリに関連する日本の法令名を調査して、JSON形式で回答してください。\n\nクエリ: {query}",
-            grounding="web_search",
-            system_instruction=f'本日の日付は {today_str} です。クエリに関連する日本の法令を調査し、関連する法令名を以下のJSON形式で回答してください。調査の際はe-Govや各省庁の公式サイト（.go.jpドメイン）を優先して参照してください。必ず有効なJSONで回答してください：{{"law_names": ["法令名1", "法令名2", "法令名3"]}}。【重要1】廃止・失効した法令は絶対に含めないこと。本日時点（{today_str}）で既に廃止・統合されている法令は除外し、現行の後継法令名のみを返すこと（例：「行政機関個人情報保護法」は2022年に廃止され「個人情報の保護に関する法律」に統合済みのため、後者を返す）。廃止・改正の有無が不明な場合はe-Govの最新情報を参照して確認すること。【重要2】クエリで言及された法令名が通称・略称・俗称の場合、対応する正式名称が確実に特定できる場合のみ採用すること。正式名称が不明確または実在が確認できない場合はその法令名を含めないこと（存在しない法令を推測で別の法令に読み替えてはならない）。',
+            input_text=f"以下のクエリに関連する日本の法令名を調査して、JSON形式で回答してください。説明文は不要です。JSONのみ出力してください。\n\nクエリ: {query}",
+            grounding=grounding_tools,
+            system_instruction=f'本日の日付は {today_str} です。{url_context_instruction}クエリに関連する日本の法令を調査し、関連する法令名を以下のJSON形式で回答してください。調査の際はe-Govや各省庁の公式サイト（.go.jpドメイン）を優先して参照してください。必ず有効なJSONのみを出力し、説明文やマークダウンは一切含めないでください：{{"law_names": ["法令名1", "法令名2", "法令名3"]}}。【重要1】廃止・失効した法令は絶対に含めないこと。本日時点（{today_str}）で既に廃止・統合されている法令は除外し、現行の後継法令名のみを返すこと（例：「行政機関個人情報保護法」は2022年に廃止され「個人情報の保護に関する法律」に統合済みのため、後者を返す）。廃止・改正の有無が不明な場合はe-Govの最新情報を参照して確認すること。【重要2】クエリで言及された法令名が通称・略称・俗称の場合、対応する正式名称が確実に特定できる場合のみ採用すること。正式名称が不明確または実在が確認できない場合はその法令名を含めないこと（存在しない法令を推測で別の法令に読み替えてはならない）。',
             temperature=0.0,
             max_output_tokens=2048,
             top_p=1.0,
             top_k=1,
             candidate_count=1,
-            thinking_budget=0,
+            thinking_budget=0 if not has_url else None,
         )
         contents, gen_config = gemini_helpers.prepare_gemini_request(
             request_body=grounding_request, config=app_config, storage_client=None
@@ -104,9 +115,10 @@ def _estimate_law_names(query, genai_client, app_config, usage_tracker) -> tuple
         logger.info(f"Web grounding response length: {len(response_text)} chars")
         logger.info(f"Web grounding response preview: {response_text[:500]}...")
 
-        # Stage 1: 直接JSON解析を試行
+        # Stage 1: 直接JSON解析を試行（```json コードブロックの囲みも除去）
+        stripped_text = re.sub(r"^```(?:json)?\s*\n?|```\s*$", "", response_text.strip())
         try:
-            result = json.loads(response_text)
+            result = json.loads(stripped_text)
             estimated_law_names = result.get("law_names", [])
             logger.info(f"Stage 1 success - Direct JSON parsing: {estimated_law_names}")
         except json.JSONDecodeError:
@@ -147,8 +159,32 @@ def _estimate_law_names(query, genai_client, app_config, usage_tracker) -> tuple
                         logger.info(f"Stage 3 success - Regex extraction: {estimated_law_names}")
                         break
 
+            # Stage 4: マークダウン形式（太字・リスト）から法令名を抽出
+            if not estimated_law_names:
+                logger.info("Stage 3 failed - Trying Stage 4: Markdown law name extraction")
+                md_patterns = [
+                    r"\*\*([^*]*(?:法律|法|規則|省令|政令|条例)[^*]*)\*\*",
+                    r"\*([^*]*(?:法律|法|規則|省令|政令|条例)[^*]*)\*",
+                    r"[*\-]\s*(.+?(?:法律|法|規則|省令|政令|条例)[^\n（(]*)",
+                ]
+                for pattern in md_patterns:
+                    matches = re.findall(pattern, response_text)
+                    if matches:
+                        cleaned = []
+                        for m in matches:
+                            name = re.sub(r"\s*[\(（].*?[)）]", "", m.strip())
+                            name = name.strip(" *-・")
+                            if 4 <= len(name) <= 60:
+                                cleaned.append(name)
+                        if cleaned:
+                            estimated_law_names = list(dict.fromkeys(cleaned))[:10]
+                            logger.info(
+                                f"Stage 4 success - Markdown extraction: {estimated_law_names}"
+                            )
+                            break
+
         if not estimated_law_names:
-            logger.warning("All 3 stages failed to extract law names")
+            logger.warning("All stages (1-4) failed to extract law names")
         else:
             logger.info(f"Final extracted law names: {estimated_law_names}")
 
@@ -286,7 +322,7 @@ def _build_references(final_articles, web_hits) -> tuple[list, str]:
     return (search_results, references_text)
 
 
-_URL_IN_QUERY_PATTERN = re.compile(r"https?://\S+")
+_URL_IN_QUERY_PATTERN = re.compile(r"https://\S+")
 _ARTICLE_NUM_PATTERN = re.compile(r"第(\d+)条")
 
 
@@ -342,14 +378,14 @@ def _build_substitution_warning(query_law_names: list[str], estimated_law_names:
     if not query_law_names or not estimated_law_names:
         return ""
 
-    _THRESHOLD = 0.30
+    threshold = 0.30
 
     substituted = []
     for qname in query_law_names:
         sims = {ename: _bigram_similarity(qname, ename) for ename in estimated_law_names}
         best_match = max(sims, key=sims.get)
         best_sim = sims[best_match]
-        if best_sim < _THRESHOLD:
+        if best_sim < threshold:
             substituted.append((qname, best_match))
             logger.info(
                 f"Query law name substitution detected: '{qname}' → '{best_match}' (sim={best_sim:.2f})"
@@ -379,10 +415,7 @@ def _expand_law_names_with_ordinances(law_names: list[str]) -> list[str]:
     """
     expanded = list(law_names)
     for name in law_names:
-        if name.endswith("法律"):
-            expanded.append(f"{name}施行令")
-            expanded.append(f"{name}施行規則")
-        elif name.endswith("法"):
+        if name.endswith("法律") or name.endswith("法"):
             expanded.append(f"{name}施行令")
             expanded.append(f"{name}施行規則")
     # 重複排除（順序保持）
@@ -426,14 +459,14 @@ def _check_law_name_divergence(law_names: list[str], articles: list) -> str:
     if not bq_law_titles:
         return ""
 
-    _THRESHOLD = 0.40
+    threshold = 0.40
 
     diverged = []
     for law_name in law_names:
         sims = {title: _bigram_similarity(law_name, title) for title in bq_law_titles}
         best_title = max(sims, key=sims.get)
         best_sim = sims[best_title]
-        if best_sim < _THRESHOLD:
+        if best_sim < threshold:
             diverged.append((law_name, best_title, best_sim))
             logger.warning(
                 f"Law name divergence detected: '{law_name}' → '{best_title}' (sim={best_sim:.2f})"
@@ -553,7 +586,7 @@ def _build_url_web_hits(urls: list[str]) -> list[dict]:
         try:
             after_scheme = url.split("://", 1)[-1]
             fallback_domain = after_scheme.split("/")[0]
-            final_url, title = gemini_helpers._fetch_page_info(url, fallback_domain)
+            final_url, title = gemini_helpers._fetch_page_info(url, fallback_domain, trusted=False)
             return {"title": title, "url": final_url, "snippet": ""}
         except Exception as e:
             logger.warning(f"URL hit fetch failed for {url}: {e}")

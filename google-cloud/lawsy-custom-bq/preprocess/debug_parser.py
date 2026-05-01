@@ -59,10 +59,8 @@ def format_article_text(article_element):
             title_elements = [el for el in element if el.tag in title_tags]
             sentence_elements = [el for el in element if el.tag in sentence_tags]
 
-            for el in title_elements:
-                parts.append(get_full_text(el))
-            for el in sentence_elements:
-                parts.append(get_full_text(el))
+            parts.extend(get_full_text(el) for el in title_elements)
+            parts.extend(get_full_text(el) for el in sentence_elements)
 
             if parts:
                 lines.append("　" * level + "　".join(parts))

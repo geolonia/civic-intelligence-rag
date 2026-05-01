@@ -5,10 +5,9 @@ import logging
 import sys
 
 import functions_framework
+import genai_util
 from flask import Request
 from google import genai
-
-import genai_util
 
 from . import gemini_config, retrieval_bq
 from .law_report_pipeline import generate_law_report

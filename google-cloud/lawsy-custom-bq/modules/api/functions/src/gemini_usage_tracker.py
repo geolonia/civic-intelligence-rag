@@ -2,7 +2,6 @@ from collections import defaultdict
 from typing import Any, TypedDict
 
 from google.genai import types
-
 from schemas import EstimatedCostInfo
 
 # ---- Pricing Information ----

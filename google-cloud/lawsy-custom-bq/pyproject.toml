@@ -4,21 +4,26 @@ line-length = 100
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "RUF", # ruff-specific rules
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "N",    # pep8-naming
+  "UP",   # pyupgrade
+  "B",    # flake8-bugbear
+  "SIM",  # flake8-simplify
+  "PERF", # perflint
 ]
 ignore = [
-    "E501",   # line too long (formatter handles this)
-    "RUF001", # ambiguous unicode in strings (intentional fullwidth chars in Japanese strings and Mermaid sanitizer)
-    "RUF002", # ambiguous unicode in docstrings (standard Japanese punctuation in Japanese docstrings)
-    "RUF003", # ambiguous unicode in comments (standard Japanese punctuation in Japanese comments)
+  "RUF001", # ambiguous-unicode-character-string (全角文字を使用するため)
+  "RUF002", # ambiguous-unicode-character-docstring
+  "RUF003", # ambiguous-unicode-character-comment
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["gemini_config", "retrieval_bq", "gemini_helpers", "schemas", "utils", "genai_util", "prompts", "gemini_usage_tracker"]
+known-first-party = ["gemini_config", "retrieval_bq", "gemini_helpers", "schemas", "utils", "genai_util", "prompts", "gemini_usage_tracker", "url_validator"]
+[tool.ruff.lint.per-file-ignores]
+"modules/api/functions/src/schemas.py" = ["N805", "N815"]  # Pydantic @root_validator uses cls; camelCase fields are API contract
+"modules/api/functions/src/prompts.py" = ["E501"]           # Japanese prompt strings cannot be split
+"modules/api/functions/src/law_report_pipeline.py" = ["E501"]  # Japanese prompt strings cannot be split
+"preprocess/*.py" = ["E501"]  # Utility scripts with long usage/error strings

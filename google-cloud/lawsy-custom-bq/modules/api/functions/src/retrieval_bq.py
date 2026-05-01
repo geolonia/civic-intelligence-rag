@@ -159,7 +159,8 @@ class BigQueryRetriever:
             LawContentSize AS (
                 SELECT
                     law_num,
-                    SUM(CHAR_LENGTH(COALESCE(content, article_summary, ''))) > 100000 as is_large_content
+                    SUM(CHAR_LENGTH(COALESCE(content, article_summary, '')))
+                        > 100000 as is_large_content
                 FROM {self.indexing_table}
                 WHERE law_num IN (SELECT law_num FROM AllNearestLaws)
                 GROUP BY law_num

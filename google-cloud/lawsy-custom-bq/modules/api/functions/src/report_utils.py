@@ -184,16 +184,14 @@ def convert_citation_to_external_link(text, references):
         return " ".join(_link_single(n) for n in nums)
 
     # mermaidコードブロックを特定し、その範囲を記録
-    mermaid_blocks = []
-    for match in re.finditer(r"```mermaid\n(.*?)\n```", text, re.DOTALL):
-        mermaid_blocks.append((match.start(), match.end()))
+    mermaid_blocks = [
+        (match.start(), match.end())
+        for match in re.finditer(r"```mermaid\n(.*?)\n```", text, re.DOTALL)
+    ]
 
     def is_in_mermaid_block(pos):
         """指定位置がmermaidブロック内かどうかを判定"""
-        for start, end in mermaid_blocks:
-            if start <= pos <= end:
-                return True
-        return False
+        return any(start <= pos <= end for start, end in mermaid_blocks)
 
     def conditional_replace(match):
         """mermaidブロック内でなければリンク変換を実行"""
