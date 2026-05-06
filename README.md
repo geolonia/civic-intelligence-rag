@@ -1,3 +1,10 @@
+---
+> **Geolonia Civic Intelligence (CI) Fork**
+> Forked from digital-go-jp/genai-ai-api for Geolonia Civic Intelligence (CI).
+> AWS query-expansion-rag (aws/) を civic AI app の base として使用。
+> GCP (gcp/lawsy-custom-bq) と Azure (azure/genai-azure) は当面未使用、upstream 追従のため残置。
+---
+
 日本語 | [English](README.en.md)
 
 # 源内 AI アプリ
