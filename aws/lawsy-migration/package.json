@@ -1,0 +1,38 @@
+{
+  "name": "lawsy-migration",
+  "version": "0.1.0",
+  "bin": {
+    "lawsy-migration": "bin/lawsy-migration.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "deploy": "cdk deploy --all",
+    "diff": "cdk diff",
+    "synth": "cdk synth",
+    "lint": "eslint . --ext .ts",
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.95.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1044.0",
+    "@aws-sdk/client-s3": "^3.1044.0",
+    "@aws-sdk/client-secrets-manager": "^3.1044.0",
+    "@types/aws-lambda": "^8.10.161",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.20.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "aws-cdk": "^2.1118.0",
+    "pg": "^8.20.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.248.0",
+    "constructs": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
