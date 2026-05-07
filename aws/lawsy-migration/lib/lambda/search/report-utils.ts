@@ -1,4 +1,4 @@
-import { DbArticle } from './types';
+import type { DbArticle } from './types';
 
 export function formatReferenceForPrompt(index: number, article: DbArticle): string {
   const content = article.content || article.article_summary || '';

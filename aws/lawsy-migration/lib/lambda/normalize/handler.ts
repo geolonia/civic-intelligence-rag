@@ -2,7 +2,7 @@
  * XML normalize Lambda: S3 に保存された e-Gov XML を解析して Aurora に挿入する。
  * S3 ObjectCreated イベントによりトリガー。
  */
-import { S3Event } from 'aws-lambda';
+import type { S3Event } from 'aws-lambda';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { Pool } from 'pg';
@@ -84,7 +84,7 @@ interface LawArticle {
   content: string;
 }
 
-function extractArticles(xml: string, lawId: string): LawArticle[] {
+function extractArticles(xml: string, _lawId: string): LawArticle[] {
   const articles: LawArticle[] = [];
   const articlePattern = /<Article[^>]*>([\s\S]*?)<\/Article>/g;
   const articleNumPattern = /<ArticleNum>([^<]*)<\/ArticleNum>/;
@@ -92,9 +92,10 @@ function extractArticles(xml: string, lawId: string): LawArticle[] {
   const paragraphPattern = /<Sentence>([^<]*(?:<[^/][^>]*>[^<]*<\/[^>]*>)*[^<]*)<\/Sentence>/g;
 
   let articleIndex = 1;
-  let match: RegExpExecArray | null;
 
-  while ((match = articlePattern.exec(xml)) !== null) {
+  for (;;) {
+    const match = articlePattern.exec(xml);
+    if (!match) break;
     const articleXml = match[1];
     const numMatch = articleNumPattern.exec(articleXml);
     const rawNum = numMatch ? numMatch[1].trim() : '';
@@ -103,9 +104,10 @@ function extractArticles(xml: string, lawId: string): LawArticle[] {
 
     // Collect paragraph texts
     const paragraphs: string[] = [];
-    let pMatch: RegExpExecArray | null;
     const pPattern = new RegExp(paragraphPattern.source, 'g');
-    while ((pMatch = pPattern.exec(articleXml)) !== null) {
+    for (;;) {
+      const pMatch = pPattern.exec(articleXml);
+      if (!pMatch) break;
       const text = pMatch[1].replace(/<[^>]+>/g, '').trim();
       if (text) paragraphs.push(text);
     }

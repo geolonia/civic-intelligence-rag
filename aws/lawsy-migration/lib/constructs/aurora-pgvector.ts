@@ -1,8 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as kms from 'aws-cdk-lib/aws-kms';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import type * as kms from 'aws-cdk-lib/aws-kms';
+import type * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
 export interface AuroraPgvectorProps {
@@ -19,7 +19,7 @@ export class AuroraPgvector extends Construct {
   constructor(scope: Construct, id: string, props: AuroraPgvectorProps) {
     super(scope, id);
 
-    const { vpc, encryptionKey, envName } = props;
+    const { vpc, encryptionKey } = props;
 
     this.securityGroup = new ec2.SecurityGroup(this, 'AuroraSG', {
       vpc,

@@ -54,7 +54,7 @@ async function getAccessToken(key: GcpServiceAccountKey): Promise<string> {
   })).toString('base64url');
 
   const signingInput = `${header}.${payload}`;
-  const { createSign } = await import('crypto');
+  const { createSign } = await import('node:crypto');
   const sign = createSign('RSA-SHA256');
   sign.update(signingInput);
   const signature = sign.sign(key.private_key, 'base64url');

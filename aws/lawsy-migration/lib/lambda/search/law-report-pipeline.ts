@@ -1,6 +1,6 @@
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import Anthropic from '@anthropic-ai/sdk';
-import {
+import type {
   SearchResponse,
   DbArticle,
   UsageSummary,
@@ -148,7 +148,7 @@ async function selectRelevantArticles(
   const indices: number[] = [];
   for (const part of text.split(',')) {
     const n = parseInt(part.trim(), 10);
-    if (!isNaN(n) && n >= 1 && n <= articles.length) indices.push(n);
+    if (!Number.isNaN(n) && n >= 1 && n <= articles.length) indices.push(n);
   }
   if (!indices.length) return articles.slice(0, 20);
 

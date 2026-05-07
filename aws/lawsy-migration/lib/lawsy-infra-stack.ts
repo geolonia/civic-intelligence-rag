@@ -11,8 +11,8 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import * as s3notifications from 'aws-cdk-lib/aws-s3-notifications';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import { Construct } from 'constructs';
-import * as path from 'path';
+import type { Construct } from 'constructs';
+import * as path from 'node:path';
 import { AuroraPgvector } from './constructs/aurora-pgvector';
 
 export interface LawsyInfraStackProps extends cdk.StackProps {

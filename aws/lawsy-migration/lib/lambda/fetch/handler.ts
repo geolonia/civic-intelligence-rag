@@ -16,13 +16,6 @@ interface EgovLawEntry {
   LawNo: string;
 }
 
-interface EgovLawListResponse {
-  LawNameListInfo: {
-    LawNameListResult: {
-      LawNamelists: { LawNamelist: EgovLawEntry[] };
-    };
-  };
-}
 
 async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
   let lastErr: unknown;
