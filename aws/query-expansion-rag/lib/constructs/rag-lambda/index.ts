@@ -6,7 +6,7 @@ import { spawnSync } from 'child_process';
 import { AssetHashType, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as lambda  from "aws-cdk-lib/aws-lambda";
 import * as iam from "aws-cdk-lib/aws-iam";
-import * as kms from "aws-cdk-lib/aws-kms";
+import type * as kms from "aws-cdk-lib/aws-kms";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 import { NagSuppressions } from "cdk-nag";

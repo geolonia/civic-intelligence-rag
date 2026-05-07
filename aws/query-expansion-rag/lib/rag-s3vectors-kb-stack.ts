@@ -1,5 +1,5 @@
-import { Stack, StackProps, RemovalPolicy } from 'aws-cdk-lib';
-import { Construct } from 'constructs';
+import { Stack, type StackProps, RemovalPolicy } from 'aws-cdk-lib';
+import type { Construct } from 'constructs';
 import * as cdk from 'aws-cdk-lib';
 import * as bedrock from 'aws-cdk-lib/aws-bedrock';
 import * as s3 from 'aws-cdk-lib/aws-s3';

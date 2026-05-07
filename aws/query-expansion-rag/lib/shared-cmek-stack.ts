@@ -1,7 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
 
 export interface SharedCmekStackProps extends cdk.StackProps {
