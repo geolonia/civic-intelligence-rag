@@ -212,8 +212,8 @@ function buildDivergenceWarning(estimatedNames: string[], articles: DbArticle[])
 function accumUsage(acc: UsageSummary, usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }): void {
   acc.input_tokens += usage.input_tokens;
   acc.output_tokens += usage.output_tokens;
-  if ('cache_read_input_tokens' in usage) acc.cache_read_tokens = (acc.cache_read_tokens ?? 0) + (usage.cache_read_input_tokens as number);
-  if ('cache_creation_input_tokens' in usage) acc.cache_write_tokens = (acc.cache_write_tokens ?? 0) + (usage.cache_creation_input_tokens as number);
+  if (usage.cache_read_input_tokens != null) acc.cache_read_tokens = (acc.cache_read_tokens ?? 0) + usage.cache_read_input_tokens;
+  if (usage.cache_creation_input_tokens != null) acc.cache_write_tokens = (acc.cache_write_tokens ?? 0) + usage.cache_creation_input_tokens;
 }
 
 // ── Main pipeline ────────────────────────────────────────────────────────────
