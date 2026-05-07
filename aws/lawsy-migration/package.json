@@ -15,6 +15,7 @@
     "test": "jest"
   },
   "devDependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.29.1",
     "@anthropic-ai/sdk": "^0.95.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1044.0",
     "@aws-sdk/client-s3": "^3.1044.0",

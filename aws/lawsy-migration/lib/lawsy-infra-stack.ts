@@ -11,6 +11,7 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import * as s3notifications from 'aws-cdk-lib/aws-s3-notifications';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as budgets from 'aws-cdk-lib/aws-budgets';
 import type { Construct } from 'constructs';
 import * as path from 'node:path';
 import { AuroraPgvector } from './constructs/aurora-pgvector';
@@ -129,7 +130,6 @@ export class LawsyInfraStack extends cdk.Stack {
         `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
         `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-sonnet-4-6`,
         `arn:aws:bedrock:${this.region}::foundation-model/jp.anthropic.claude-sonnet-4-6-20251101-v1:0`,
-        `arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6`,
       ],
     }));
 
@@ -282,6 +282,29 @@ export class LawsyInfraStack extends cdk.Stack {
     const searchResource = api.root.addResource('search');
     searchResource.addMethod('POST', searchIntegration, {
       apiKeyRequired: true,
+    });
+
+    // ── Budget Alert ($300/month PoC guard) ──────────────────────────────────
+    new budgets.CfnBudget(this, 'PocBudget', {
+      budget: {
+        budgetType: 'COST',
+        budgetLimit: { amount: 300, unit: 'USD' },
+        timeUnit: 'MONTHLY',
+        budgetName: `lawsy-poc-budget${envName}`,
+      },
+      notificationsWithSubscribers: [
+        {
+          notification: {
+            notificationType: 'ACTUAL',
+            comparisonOperator: 'GREATER_THAN',
+            threshold: 80,
+            thresholdType: 'PERCENTAGE',
+          },
+          subscribers: [
+            { subscriptionType: 'EMAIL', address: 'hal@geolonia.com' },
+          ],
+        },
+      ],
     });
 
     // ── Outputs ──────────────────────────────────────────────────────────────

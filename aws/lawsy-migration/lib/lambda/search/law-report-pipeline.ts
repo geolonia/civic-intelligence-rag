@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import Anthropic from '@anthropic-ai/sdk';
+import AnthropicBedrock from '@anthropic-ai/bedrock-sdk';
 import type {
   SearchResponse,
   DbArticle,
@@ -21,7 +21,7 @@ import {
 } from './report-utils';
 import { estimateLawNamesWithVertexAI } from './vertex-grounding';
 
-const client = new Anthropic();
+const client = new AnthropicBedrock({ awsRegion: process.env.BEDROCK_REGION || 'ap-northeast-1' });
 
 const MODEL_ID = 'jp.anthropic.claude-sonnet-4-6-20251101-v1:0';
 const EMBEDDING_MODEL = 'amazon.titan-embed-text-v2:0';
@@ -42,7 +42,7 @@ async function embedText(text: string): Promise<number[]> {
   return parsed.embedding;
 }
 
-// ── Law name estimation (3-stage: Vertex AI → pgvector → Claude) ─────────────
+// ── Law name estimation (Vertex AI primary, Claude fallback) — pgvector is used in search stage ──
 
 async function estimateLawNames(
   query: string,
@@ -209,7 +209,7 @@ function buildDivergenceWarning(estimatedNames: string[], articles: DbArticle[])
 
 // ── Usage accumulator ────────────────────────────────────────────────────────
 
-function accumUsage(acc: UsageSummary, usage: Anthropic.Usage): void {
+function accumUsage(acc: UsageSummary, usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }): void {
   acc.input_tokens += usage.input_tokens;
   acc.output_tokens += usage.output_tokens;
   if ('cache_read_input_tokens' in usage) acc.cache_read_tokens = (acc.cache_read_tokens ?? 0) + (usage.cache_read_input_tokens as number);
