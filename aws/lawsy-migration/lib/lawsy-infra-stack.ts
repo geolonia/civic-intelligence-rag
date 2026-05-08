@@ -1,30 +1,31 @@
+import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as kms from 'aws-cdk-lib/aws-kms';
-import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
-import * as iam from 'aws-cdk-lib/aws-iam';
-import * as logs from 'aws-cdk-lib/aws-logs';
+import * as budgets from 'aws-cdk-lib/aws-budgets';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as kms from 'aws-cdk-lib/aws-kms';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3notifications from 'aws-cdk-lib/aws-s3-notifications';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as budgets from 'aws-cdk-lib/aws-budgets';
 import type { Construct } from 'constructs';
-import * as path from 'node:path';
 import { AuroraPgvector } from './constructs/aurora-pgvector';
 
 export interface LawsyInfraStackProps extends cdk.StackProps {
   envName: string;
+  notificationEmail?: string;
 }
 
 export class LawsyInfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: LawsyInfraStackProps) {
     super(scope, id, props);
 
-    const { envName } = props;
+    const { envName, notificationEmail } = props;
 
     // ── KMS CMEK ────────────────────────────────────────────────────────────
     const encryptionKey = new kms.Key(this, 'LawsyCmek', {
@@ -34,25 +35,29 @@ export class LawsyInfraStack extends cdk.Stack {
       alias: `lawsy-cmek${envName}`,
     });
 
-    encryptionKey.addToResourcePolicy(new iam.PolicyStatement({
-      sid: 'AllowRdsToUseKey',
-      effect: iam.Effect.ALLOW,
-      principals: [new iam.ServicePrincipal('rds.amazonaws.com')],
-      actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:CreateGrant', 'kms:DescribeKey'],
-      resources: ['*'],
-    }));
-    encryptionKey.addToResourcePolicy(new iam.PolicyStatement({
-      sid: 'AllowCloudWatchLogsToUseKey',
-      effect: iam.Effect.ALLOW,
-      principals: [new iam.ServicePrincipal(`logs.${this.region}.amazonaws.com`)],
-      actions: ['kms:Encrypt', 'kms:Decrypt', 'kms:ReEncrypt*', 'kms:GenerateDataKey*', 'kms:DescribeKey'],
-      resources: ['*'],
-      conditions: {
-        ArnLike: {
-          'kms:EncryptionContext:aws:logs:arn': `arn:aws:logs:${this.region}:${this.account}:*`,
+    encryptionKey.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowRdsToUseKey',
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ServicePrincipal('rds.amazonaws.com')],
+        actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:CreateGrant', 'kms:DescribeKey'],
+        resources: ['*'],
+      }),
+    );
+    encryptionKey.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowCloudWatchLogsToUseKey',
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ServicePrincipal(`logs.${this.region}.amazonaws.com`)],
+        actions: ['kms:Encrypt', 'kms:Decrypt', 'kms:ReEncrypt*', 'kms:GenerateDataKey*', 'kms:DescribeKey'],
+        resources: ['*'],
+        conditions: {
+          ArnLike: {
+            'kms:EncryptionContext:aws:logs:arn': `arn:aws:logs:${this.region}:${this.account}:*`,
+          },
         },
-      },
-    }));
+      }),
+    );
 
     // ── VPC ─────────────────────────────────────────────────────────────────
     const vpc = new ec2.Vpc(this, 'LawsyVpc', {
@@ -72,9 +77,7 @@ export class LawsyInfraStack extends cdk.Stack {
       encryptionKey,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
-      lifecycleRules: [
-        { expiration: cdk.Duration.days(365 * 5) },
-      ],
+      lifecycleRules: [{ expiration: cdk.Duration.days(365 * 5) }],
     });
 
     // ── Aurora pgvector ──────────────────────────────────────────────────────
@@ -110,28 +113,56 @@ export class LawsyInfraStack extends cdk.Stack {
       LOG_LEVEL: 'INFO',
     };
 
-    // ── Lambda Execution Role (shared base) ──────────────────────────────────
-    const lambdaRole = new iam.Role(this, 'LambdaRole', {
+    const vpcPolicy = iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaVPCAccessExecutionRole');
+
+    // ── fetchRole: S3 write + EventBridge (no DB / Bedrock access) ───────────
+    const fetchRole = new iam.Role(this, 'FetchRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaVPCAccessExecutionRole'),
-      ],
+      managedPolicies: [vpcPolicy],
     });
-    aurora.secret.grantRead(lambdaRole);
-    gcpVertexSecret.grantRead(lambdaRole);
-    sourceBucket.grantReadWrite(lambdaRole);
-    encryptionKey.grantDecrypt(lambdaRole);
-    lambdaRole.addToPolicy(new iam.PolicyStatement({
-      actions: [
-        'bedrock:InvokeModel',
-        'bedrock:InvokeModelWithResponseStream',
-      ],
-      resources: [
-        `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
-        `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-sonnet-4-6`,
-        `arn:aws:bedrock:${this.region}::foundation-model/jp.anthropic.claude-sonnet-4-6-20251101-v1:0`,
-      ],
-    }));
+    sourceBucket.grantWrite(fetchRole);
+    encryptionKey.grantEncryptDecrypt(fetchRole);
+
+    // ── normalizeRole: S3 read + Aurora + Secrets (no Bedrock / GCP) ─────────
+    const normalizeRole = new iam.Role(this, 'NormalizeRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [vpcPolicy],
+    });
+    sourceBucket.grantRead(normalizeRole);
+    aurora.secret.grantRead(normalizeRole);
+    encryptionKey.grantDecrypt(normalizeRole);
+
+    // ── embedRole: Aurora + Bedrock Titan + Secrets (no S3 / Claude / GCP) ──
+    const embedRole = new iam.Role(this, 'EmbedRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [vpcPolicy],
+    });
+    aurora.secret.grantRead(embedRole);
+    encryptionKey.grantDecrypt(embedRole);
+    embedRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+        resources: [`arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`],
+      }),
+    );
+
+    // ── searchRole: Aurora + Bedrock (Claude + Titan) + Secrets + GCP ────────
+    const searchRole = new iam.Role(this, 'SearchRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [vpcPolicy],
+    });
+    aurora.secret.grantRead(searchRole);
+    gcpVertexSecret.grantRead(searchRole);
+    encryptionKey.grantDecrypt(searchRole);
+    searchRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+        resources: [
+          `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+          `arn:aws:bedrock:${this.region}::foundation-model/jp.anthropic.claude-sonnet-4-6-20251101-v1:0`,
+        ],
+      }),
+    );
 
     // ── Lambda Layer (shared deps: pg, @anthropic-ai/sdk) ────────────────────
     // NOTE: Layer bundled from lib/lambda/layer/ at deploy time.
@@ -149,7 +180,7 @@ export class LawsyInfraStack extends cdk.Stack {
       entry: path.join(__dirname, 'lambda/fetch/handler.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
-      role: lambdaRole,
+      role: fetchRole,
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
@@ -177,7 +208,7 @@ export class LawsyInfraStack extends cdk.Stack {
       entry: path.join(__dirname, 'lambda/normalize/handler.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
-      role: lambdaRole,
+      role: normalizeRole,
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
@@ -205,7 +236,7 @@ export class LawsyInfraStack extends cdk.Stack {
       entry: path.join(__dirname, 'lambda/embed/handler.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
-      role: lambdaRole,
+      role: embedRole,
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
@@ -228,7 +259,7 @@ export class LawsyInfraStack extends cdk.Stack {
       entry: path.join(__dirname, 'lambda/search/handler.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
-      role: lambdaRole,
+      role: searchRole,
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
@@ -292,19 +323,19 @@ export class LawsyInfraStack extends cdk.Stack {
         timeUnit: 'MONTHLY',
         budgetName: `lawsy-poc-budget${envName}`,
       },
-      notificationsWithSubscribers: [
-        {
-          notification: {
-            notificationType: 'ACTUAL',
-            comparisonOperator: 'GREATER_THAN',
-            threshold: 80,
-            thresholdType: 'PERCENTAGE',
-          },
-          subscribers: [
-            { subscriptionType: 'EMAIL', address: 'hal@geolonia.com' },
-          ],
-        },
-      ],
+      notificationsWithSubscribers: notificationEmail
+        ? [
+            {
+              notification: {
+                notificationType: 'ACTUAL',
+                comparisonOperator: 'GREATER_THAN',
+                threshold: 80,
+                thresholdType: 'PERCENTAGE',
+              },
+              subscribers: [{ subscriptionType: 'EMAIL', address: notificationEmail }],
+            },
+          ]
+        : [],
     });
 
     // ── Outputs ──────────────────────────────────────────────────────────────

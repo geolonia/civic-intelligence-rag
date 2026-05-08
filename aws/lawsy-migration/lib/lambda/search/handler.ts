@@ -1,9 +1,6 @@
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { Pool } from 'pg';
-import {
-  SecretsManagerClient,
-  GetSecretValueCommand,
-} from '@aws-sdk/client-secrets-manager';
 import { generateLawReport } from './law-report-pipeline';
 import type { SearchRequest } from './types';
 
@@ -13,9 +10,11 @@ async function getPool(): Promise<Pool> {
   if (pool) return pool;
 
   const sm = new SecretsManagerClient({ region: process.env.AWS_REGION });
-  const resp = await sm.send(new GetSecretValueCommand({
-    SecretId: process.env.DB_SECRET_ARN!,
-  }));
+  const resp = await sm.send(
+    new GetSecretValueCommand({
+      SecretId: process.env.DB_SECRET_ARN!,
+    }),
+  );
 
   const secret = JSON.parse(resp.SecretString!) as {
     username: string;

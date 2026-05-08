@@ -2,39 +2,21 @@
  * XML normalize Lambda: S3 に保存された e-Gov XML を解析して Aurora に挿入する。
  * S3 ObjectCreated イベントによりトリガー。
  */
+
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { S3Event } from 'aws-lambda';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
+import { getDbPool } from '../db-client';
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
-let pool: Pool | null = null;
-
-interface DbSecret {
-  username: string;
-  password: string;
-  host: string;
-  port: number;
-  dbname: string;
-}
+let schemaInitialized = false;
 
 async function getPool(): Promise<Pool> {
-  if (pool) return pool;
-  const sm = new SecretsManagerClient({ region: process.env.AWS_REGION });
-  const resp = await sm.send(new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN! }));
-  const secret = JSON.parse(resp.SecretString!) as DbSecret;
-  pool = new Pool({
-    host: secret.host,
-    port: secret.port,
-    database: process.env.DB_NAME || 'lawsy',
-    user: secret.username,
-    password: secret.password,
-    ssl: { rejectUnauthorized: false },
-    max: 3,
-  });
-
-  // pgvector 拡張とスキーマを初期化
-  await initSchema(pool);
+  const pool = await getDbPool();
+  if (!schemaInitialized) {
+    await initSchema(pool);
+    schemaInitialized = true;
+  }
   return pool;
 }
 
@@ -67,8 +49,9 @@ async function initSchema(db: Pool): Promise<void> {
   `);
   await db.query(`
     CREATE TABLE IF NOT EXISTS laws_embeddings (
-      law_id    VARCHAR(64) NOT NULL,
-      embedding vector(1024) NOT NULL
+      law_id    VARCHAR(64)  NOT NULL REFERENCES laws(law_id) ON DELETE CASCADE,
+      embedding vector(1024) NOT NULL,
+      PRIMARY KEY (law_id)
     )
   `);
   await db.query(`

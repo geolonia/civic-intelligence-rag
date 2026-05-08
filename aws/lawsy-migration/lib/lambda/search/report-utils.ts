@@ -12,10 +12,7 @@ export function formatReferenceForOutput(index: number, article: DbArticle): str
   return `[${index + 1}] 🔗 **[${title}](${article.url})**${contentLine}`;
 }
 
-export function filterCitedReferences(
-  reportText: string,
-  articles: DbArticle[],
-): Array<[number, DbArticle]> {
+export function filterCitedReferences(reportText: string, articles: DbArticle[]): Array<[number, DbArticle]> {
   const rawNums = [...reportText.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)];
   const citedIndices = new Set<number>();
   for (const m of rawNums) {
@@ -24,24 +21,25 @@ export function filterCitedReferences(
     }
   }
   const sorted = [...citedIndices].sort((a, b) => a - b);
-  return sorted
-    .filter((i) => i >= 1 && i <= articles.length)
-    .map((i) => [i, articles[i - 1]]);
+  return sorted.filter((i) => i >= 1 && i <= articles.length).map((i) => [i, articles[i - 1]]);
 }
 
 export function sanitizeMermaid(text: string): string {
   return text.replace(/```mermaid\n([\s\S]*?)\n```/g, (_match, content: string) => {
     const sanitized = content
-      .replace(/\(([^)]+)\)/g, (_m: string, inner: string) => `(${inner.replace(/[<>]/g, (c: string) => (c === '<' ? '＜' : '＞'))})`)
-      .replace(/\[([^\]]+)\]/g, (_m: string, inner: string) => `[${inner.replace(/[<>]/g, (c: string) => (c === '<' ? '＜' : '＞'))}]`);
+      .replace(
+        /\(([^)]+)\)/g,
+        (_m: string, inner: string) => `(${inner.replace(/[<>]/g, (c: string) => (c === '<' ? '＜' : '＞'))})`,
+      )
+      .replace(
+        /\[([^\]]+)\]/g,
+        (_m: string, inner: string) => `[${inner.replace(/[<>]/g, (c: string) => (c === '<' ? '＜' : '＞'))}]`,
+      );
     return `\`\`\`mermaid\n${sanitized}\n\`\`\``;
   });
 }
 
-export function convertCitationsToLinks(
-  text: string,
-  references: Array<[number, DbArticle]>,
-): string {
+export function convertCitationsToLinks(text: string, references: Array<[number, DbArticle]>): string {
   const refMap = new Map<number, DbArticle>(references);
   return text.replace(/\[(\d+(?:,\s*\d+)*)\]/g, (match, inner: string) => {
     const nums = inner.split(',').map((s: string) => parseInt(s.trim(), 10));

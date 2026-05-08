@@ -1,7 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
-import * as rds from 'aws-cdk-lib/aws-rds';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type * as kms from 'aws-cdk-lib/aws-kms';
+import * as rds from 'aws-cdk-lib/aws-rds';
 import type * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
@@ -47,7 +47,7 @@ export class AuroraPgvector extends Construct {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       defaultDatabaseName: 'lawsy',
       parameters: {
-        'shared_preload_libraries': 'pgvector',
+        shared_preload_libraries: 'pgvector',
       },
     });
 
@@ -55,10 +55,6 @@ export class AuroraPgvector extends Construct {
   }
 
   allowIngressFrom(sg: ec2.ISecurityGroup): void {
-    this.securityGroup.addIngressRule(
-      sg,
-      ec2.Port.tcp(5432),
-      'Allow Lambda to connect to Aurora',
-    );
+    this.securityGroup.addIngressRule(sg, ec2.Port.tcp(5432), 'Allow Lambda to connect to Aurora');
   }
 }

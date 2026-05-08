@@ -3,63 +3,32 @@
  * 未 embedding の articles を Bedrock Titan Embeddings v2 で embedding して Aurora に保存する。
  * normalize Lambda 完了後に invoke、または Step Functions で連鎖実行。
  */
-import {
-  SecretsManagerClient,
-  GetSecretValueCommand,
-} from '@aws-sdk/client-secrets-manager';
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
-import { Pool } from 'pg';
+import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { getDbPool } from '../db-client';
 
 const bedrock = new BedrockRuntimeClient({ region: process.env.BEDROCK_REGION || 'ap-northeast-1' });
-let pool: Pool | null = null;
-
-interface DbSecret {
-  username: string;
-  password: string;
-  host: string;
-  port: number;
-  dbname: string;
-}
 
 interface EmbedEvent {
   lawId?: string;
   batchSize?: number;
 }
 
-async function getPool(): Promise<Pool> {
-  if (pool) return pool;
-  const sm = new SecretsManagerClient({ region: process.env.AWS_REGION });
-  const resp = await sm.send(new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN! }));
-  const secret = JSON.parse(resp.SecretString!) as DbSecret;
-  pool = new Pool({
-    host: secret.host,
-    port: secret.port,
-    database: process.env.DB_NAME || 'lawsy',
-    user: secret.username,
-    password: secret.password,
-    ssl: { rejectUnauthorized: false },
-    max: 3,
-  });
-  return pool;
-}
-
 async function embedText(text: string): Promise<number[]> {
   const body = JSON.stringify({ inputText: text.slice(0, 8_192), dimensions: 1024, normalize: true });
-  const resp = await bedrock.send(new InvokeModelCommand({
-    modelId: 'amazon.titan-embed-text-v2:0',
-    body: Buffer.from(body),
-    contentType: 'application/json',
-    accept: 'application/json',
-  }));
+  const resp = await bedrock.send(
+    new InvokeModelCommand({
+      modelId: 'amazon.titan-embed-text-v2:0',
+      body: Buffer.from(body),
+      contentType: 'application/json',
+      accept: 'application/json',
+    }),
+  );
   const parsed = JSON.parse(Buffer.from(resp.body).toString()) as { embedding: number[] };
   return parsed.embedding;
 }
 
 export async function handler(event: EmbedEvent): Promise<{ processed: number }> {
-  const db = await getPool();
+  const db = await getDbPool();
   const batchSize = event.batchSize ?? 50;
   const whereClause = event.lawId
     ? `WHERE a.embedding IS NULL AND a.law_id = $2 LIMIT $1`
@@ -81,10 +50,10 @@ export async function handler(event: EmbedEvent): Promise<{ processed: number }>
     try {
       const embedding = await embedText(text);
       const vectorLiteral = `[${embedding.join(',')}]`;
-      await db.query(
-        `UPDATE articles SET embedding = $1::vector, embedded_at = NOW() WHERE id = $2`,
-        [vectorLiteral, row.id],
-      );
+      await db.query(`UPDATE articles SET embedding = $1::vector, embedded_at = NOW() WHERE id = $2`, [
+        vectorLiteral,
+        row.id,
+      ]);
       processed++;
     } catch (err) {
       console.error(`Failed to embed article ${row.id}:`, err);
@@ -94,17 +63,16 @@ export async function handler(event: EmbedEvent): Promise<{ processed: number }>
   // Also update laws_embeddings table for law-level vector search
   if (event.lawId) {
     try {
-      const lawResp = await db.query<{ law_title: string }>(
-        `SELECT law_title FROM laws WHERE law_id = $1`,
-        [event.lawId],
-      );
+      const lawResp = await db.query<{ law_title: string }>(`SELECT law_title FROM laws WHERE law_id = $1`, [
+        event.lawId,
+      ]);
       if (lawResp.rows.length > 0) {
         const embedding = await embedText(lawResp.rows[0].law_title);
         const vectorLiteral = `[${embedding.join(',')}]`;
         await db.query(
           `INSERT INTO laws_embeddings (law_id, embedding)
            VALUES ($1, $2::vector)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (law_id) DO NOTHING`,
           [event.lawId, vectorLiteral],
         );
       }

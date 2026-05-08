@@ -1,24 +1,20 @@
-import type { Pool } from 'pg';
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk';
-import type {
-  SearchResponse,
-  DbArticle,
-  UsageSummary,
-} from './types';
+import type { Pool } from 'pg';
 import {
   PROMPT_GENERATE_COMPLETE_REPORT,
   PROMPT_SELECT_RELEVANT_ARTICLES,
   SYSTEM_LAW_NAME_ESTIMATION,
 } from './prompts';
 import {
-  formatReferenceForPrompt,
-  formatReferenceForOutput,
-  filterCitedReferences,
-  sanitizeMermaid,
-  convertCitationsToLinks,
   biggramSimilarity,
+  convertCitationsToLinks,
   expandLawNames,
+  filterCitedReferences,
+  formatReferenceForOutput,
+  formatReferenceForPrompt,
+  sanitizeMermaid,
 } from './report-utils';
+import type { DbArticle, SearchResponse, UsageSummary } from './types';
 import { estimateLawNamesWithVertexAI } from './vertex-grounding';
 
 const client = new AnthropicBedrock({ awsRegion: process.env.BEDROCK_REGION || 'ap-northeast-1' });
@@ -32,21 +28,21 @@ async function embedText(text: string): Promise<number[]> {
   const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
   const bedrock = new BedrockRuntimeClient({ region: process.env.BEDROCK_REGION || 'ap-northeast-1' });
   const body = JSON.stringify({ inputText: text, dimensions: 1024, normalize: true });
-  const resp = await bedrock.send(new InvokeModelCommand({
-    modelId: EMBEDDING_MODEL,
-    body: Buffer.from(body),
-    contentType: 'application/json',
-    accept: 'application/json',
-  }));
+  const resp = await bedrock.send(
+    new InvokeModelCommand({
+      modelId: EMBEDDING_MODEL,
+      body: Buffer.from(body),
+      contentType: 'application/json',
+      accept: 'application/json',
+    }),
+  );
   const parsed = JSON.parse(Buffer.from(resp.body).toString()) as { embedding: number[] };
   return parsed.embedding;
 }
 
 // ── Law name estimation (Vertex AI primary, Claude fallback) — pgvector is used in search stage ──
 
-async function estimateLawNames(
-  query: string,
-): Promise<string[]> {
+async function estimateLawNames(query: string): Promise<string[]> {
   // Stage 1: GCP Vertex AI Web Grounding (Q2=e)
   try {
     const names = await estimateLawNamesWithVertexAI(query);
@@ -76,11 +72,7 @@ async function estimateLawNames(
 
 // ── pgvector similarity search ───────────────────────────────────────────────
 
-async function searchArticlesByEmbedding(
-  pool: Pool,
-  lawNames: string[],
-  limit = 100,
-): Promise<DbArticle[]> {
+async function searchArticlesByEmbedding(pool: Pool, lawNames: string[], limit = 100): Promise<DbArticle[]> {
   const expandedNames = expandLawNames(lawNames);
   const allArticles: DbArticle[] = [];
   const seenAnchors = new Set<string>();
@@ -103,6 +95,7 @@ async function searchArticlesByEmbedding(
        INNER JOIN (
          SELECT law_id, MIN(embedding <=> $1::vector) as best_sim
          FROM laws_embeddings
+         GROUP BY law_id
          ORDER BY best_sim ASC
          LIMIT 3
        ) nearest ON a.law_id = nearest.law_id
@@ -157,19 +150,17 @@ async function selectRelevantArticles(
 
 // ── Report generation ─────────────────────────────────────────────────────────
 
-async function generateReport(
-  query: string,
-  referencesText: string,
-  usageAccum: UsageSummary,
-): Promise<string> {
+async function generateReport(query: string, referencesText: string, usageAccum: UsageSummary): Promise<string> {
   const resp = await client.messages.create({
     model: MODEL_ID,
     max_tokens: 8192,
     system: PROMPT_GENERATE_COMPLETE_REPORT,
-    messages: [{
-      role: 'user',
-      content: `クエリ: ${query}\n\n参考情報:\n${referencesText}`,
-    }],
+    messages: [
+      {
+        role: 'user',
+        content: `クエリ: ${query}\n\n参考情報:\n${referencesText}`,
+      },
+    ],
   });
   accumUsage(usageAccum, resp.usage);
 
@@ -196,10 +187,7 @@ function buildDivergenceWarning(estimatedNames: string[], articles: DbArticle[])
     if (best.sim < 0.4) diverged.push([name, best.title, best.sim]);
   }
   if (!diverged.length) return '';
-  const lines = [
-    '【警告】推定された法令名とDB取得法令名に大きな乖離があります。',
-    '',
-  ];
+  const lines = ['【警告】推定された法令名とDB取得法令名に大きな乖離があります。', ''];
   for (const [est, actual] of diverged) {
     lines.push(`- 推定法令名「${est}」→ 取得法令「${actual}」`);
   }
@@ -209,19 +197,26 @@ function buildDivergenceWarning(estimatedNames: string[], articles: DbArticle[])
 
 // ── Usage accumulator ────────────────────────────────────────────────────────
 
-function accumUsage(acc: UsageSummary, usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }): void {
+function accumUsage(
+  acc: UsageSummary,
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
+  },
+): void {
   acc.input_tokens += usage.input_tokens;
   acc.output_tokens += usage.output_tokens;
-  if (usage.cache_read_input_tokens != null) acc.cache_read_tokens = (acc.cache_read_tokens ?? 0) + usage.cache_read_input_tokens;
-  if (usage.cache_creation_input_tokens != null) acc.cache_write_tokens = (acc.cache_write_tokens ?? 0) + usage.cache_creation_input_tokens;
+  if (usage.cache_read_input_tokens != null)
+    acc.cache_read_tokens = (acc.cache_read_tokens ?? 0) + usage.cache_read_input_tokens;
+  if (usage.cache_creation_input_tokens != null)
+    acc.cache_write_tokens = (acc.cache_write_tokens ?? 0) + usage.cache_creation_input_tokens;
 }
 
 // ── Main pipeline ────────────────────────────────────────────────────────────
 
-export async function generateLawReport(
-  query: string,
-  pool: Pool,
-): Promise<SearchResponse> {
+export async function generateLawReport(query: string, pool: Pool): Promise<SearchResponse> {
   const usage: UsageSummary = { input_tokens: 0, output_tokens: 0 };
 
   // 1. Estimate law names
@@ -257,9 +252,8 @@ export async function generateLawReport(
 
   // 6. Finalize: filter citations, convert to links, sanitize mermaid
   const citedRefs = filterCitedReferences(rawReport, selected);
-  const fallbackRefs: Array<[number, DbArticle]> = citedRefs.length > 0
-    ? citedRefs
-    : selected.map((a, i) => [i + 1, a]);
+  const fallbackRefs: Array<[number, DbArticle]> =
+    citedRefs.length > 0 ? citedRefs : selected.map((a, i) => [i + 1, a]);
 
   const reportWithLinks = convertCitationsToLinks(rawReport, fallbackRefs);
   const sanitized = sanitizeMermaid(reportWithLinks);

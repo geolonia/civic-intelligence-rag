@@ -37,8 +37,9 @@ CREATE INDEX IF NOT EXISTS articles_embedding_idx
 
 -- Law-level embeddings for fast law lookup
 CREATE TABLE IF NOT EXISTS laws_embeddings (
-    law_id    VARCHAR(64)  NOT NULL,
-    embedding vector(1024) NOT NULL
+    law_id    VARCHAR(64)  NOT NULL REFERENCES laws(law_id) ON DELETE CASCADE,
+    embedding vector(1024) NOT NULL,
+    PRIMARY KEY (law_id)
 );
 
 CREATE INDEX IF NOT EXISTS laws_embedding_hnsw_idx

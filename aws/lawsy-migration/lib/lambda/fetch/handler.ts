@@ -2,7 +2,7 @@
  * e-Gov fetch Lambda: 法令 XML を e-Gov API から取得して S3 source layer に保存する。
  * CloudWatch Events 毎週日曜 00:00 UTC にスケジュール実行。
  */
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 const SOURCE_BUCKET = process.env.SOURCE_BUCKET!;
@@ -15,7 +15,6 @@ interface EgovLawEntry {
   LawName: string;
   LawNo: string;
 }
-
 
 async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
   let lastErr: unknown;
@@ -64,16 +63,18 @@ async function fetchAndStoreLawXml(lawId: string): Promise<void> {
     return;
   }
 
-  await s3.send(new PutObjectCommand({
-    Bucket: SOURCE_BUCKET,
-    Key: `raw-xml/${lawId}/latest.xml`,
-    Body: xml,
-    ContentType: 'application/xml',
-    Metadata: {
-      'law-id': lawId,
-      'fetched-at': new Date().toISOString(),
-    },
-  }));
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: SOURCE_BUCKET,
+      Key: `raw-xml/${lawId}/latest.xml`,
+      Body: xml,
+      ContentType: 'application/xml',
+      Metadata: {
+        'law-id': lawId,
+        'fetched-at': new Date().toISOString(),
+      },
+    }),
+  );
 }
 
 export async function handler(): Promise<void> {
