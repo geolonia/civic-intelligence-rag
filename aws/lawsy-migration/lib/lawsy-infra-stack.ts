@@ -247,6 +247,10 @@ export class LawsyInfraStack extends cdk.Stack {
       bundling: { minify: true, sourceMap: true, externalModules: [] },
     });
 
+    // Grant normalizeLambda permission to invoke embedLambda (C5: trigger embed after normalize)
+    embedLambda.grantInvoke(normalizeLambda);
+    normalizeLambda.addEnvironment('EMBED_LAMBDA_ARN', embedLambda.functionArn);
+
     // ── Lambda: Search / Report Generation (main API handler) ───────────────
     const searchLogGroup = new logs.LogGroup(this, 'SearchLogGroup', {
       logGroupName: `/aws/lambda/lawsy-search${envName}`,
@@ -263,7 +267,7 @@ export class LawsyInfraStack extends cdk.Stack {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
-      timeout: cdk.Duration.seconds(60),
+      timeout: cdk.Duration.seconds(28),
       memorySize: 1024,
       environment: sharedLambdaEnv,
       logGroup: searchLogGroup,

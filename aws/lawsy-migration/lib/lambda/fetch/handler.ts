@@ -97,12 +97,8 @@ export async function handler(): Promise<void> {
 
   console.log(`Total laws to fetch: ${allLaws.length}`);
 
-  // Lambda タイムアウト (15 min) を考慮して最大 100 件/回
-  const batchSize = 100;
-  const batch = allLaws.slice(0, batchSize);
-
   let success = 0;
-  for (const law of batch) {
+  for (const law of allLaws) {
     try {
       await fetchAndStoreLawXml(law.LawId);
       success++;
@@ -111,5 +107,5 @@ export async function handler(): Promise<void> {
     }
   }
 
-  console.log(`Fetch complete: ${success}/${batch.length} stored to S3.`);
+  console.log(`Fetch complete: ${success}/${allLaws.length} stored to S3.`);
 }

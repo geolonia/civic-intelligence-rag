@@ -3,12 +3,14 @@
  * S3 ObjectCreated イベントによりトリガー。
  */
 
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { S3Event } from 'aws-lambda';
 import type { Pool } from 'pg';
 import { getDbPool } from '../db-client';
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
+const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION });
 let schemaInitialized = false;
 
 async function getPool(): Promise<Pool> {
@@ -39,7 +41,7 @@ async function initSchema(db: Pool): Promise<void> {
       law_id        VARCHAR(64) NOT NULL REFERENCES laws(law_id) ON DELETE CASCADE,
       law_title     TEXT NOT NULL,
       article_no    VARCHAR(32),
-      unique_anchor VARCHAR(128) NOT NULL UNIQUE,
+      unique_anchor VARCHAR(128) NOT NULL,
       content       TEXT,
       article_summary TEXT,
       embedding     vector(1024),
@@ -156,11 +158,26 @@ export async function handler(event: S3Event): Promise<void> {
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (law_id, unique_anchor) DO UPDATE
            SET content = EXCLUDED.content,
-               article_no = EXCLUDED.article_no`,
+               article_no = EXCLUDED.article_no,
+               embedding = NULL,
+               embedded_at = NULL`,
         [lawId, lawTitle, article.articleNo, article.uniqueAnchor, article.content],
       );
     }
 
     console.log(`Stored ${articles.length} articles for law ${lawId} (${lawTitle})`);
+  }
+
+  // Trigger EmbedLambda asynchronously to process newly stored articles
+  const embedArn = process.env.EMBED_LAMBDA_ARN;
+  if (embedArn) {
+    await lambdaClient.send(
+      new InvokeCommand({
+        FunctionName: embedArn,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ source: 'normalize' })),
+      }),
+    );
+    console.log('EmbedLambda triggered asynchronously');
   }
 }
