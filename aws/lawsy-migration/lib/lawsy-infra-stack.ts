@@ -109,6 +109,7 @@ export class LawsyInfraStack extends cdk.Stack {
       DB_NAME: 'lawsy',
       SOURCE_BUCKET: sourceBucket.bucketName,
       GCP_VERTEX_SECRET_ARN: gcpVertexSecret.secretArn,
+      VERTEX_LOCATION: 'asia-northeast1',
       BEDROCK_REGION: this.region,
       LOG_LEVEL: 'INFO',
     };
@@ -159,7 +160,8 @@ export class LawsyInfraStack extends cdk.Stack {
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
         resources: [
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
-          `arn:aws:bedrock:${this.region}::foundation-model/jp.anthropic.claude-sonnet-4-6-20251101-v1:0`,
+          'arn:aws:bedrock:ap-northeast-1::inference-profile/*',
+          'arn:aws:bedrock:ap-northeast-3::inference-profile/*',
         ],
       }),
     );

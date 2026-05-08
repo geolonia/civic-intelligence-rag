@@ -30,7 +30,7 @@ export class AuroraPgvector extends Construct {
     // Aurora Serverless v2 PostgreSQL 16 with pgvector
     this.cluster = new rds.DatabaseCluster(this, 'Cluster', {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
-        version: rds.AuroraPostgresEngineVersion.VER_16_3,
+        version: rds.AuroraPostgresEngineVersion.of('16.10', '16'),
       }),
       serverlessV2MinCapacity: 0.5,
       serverlessV2MaxCapacity: 2,
@@ -46,9 +46,6 @@ export class AuroraPgvector extends Construct {
       deletionProtection: false,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       defaultDatabaseName: 'lawsy',
-      parameters: {
-        shared_preload_libraries: 'pgvector',
-      },
     });
 
     this.secret = this.cluster.secret!;

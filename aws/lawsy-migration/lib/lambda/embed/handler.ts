@@ -31,8 +31,8 @@ export async function handler(event: EmbedEvent): Promise<{ processed: number }>
   const db = await getDbPool();
   const batchSize = event.batchSize ?? 50;
   const whereClause = event.lawId
-    ? `WHERE a.embedding IS NULL AND a.law_id = $2 LIMIT $1`
-    : `WHERE a.embedding IS NULL LIMIT $1`;
+    ? `WHERE embedding IS NULL AND law_id = $2 LIMIT $1`
+    : `WHERE embedding IS NULL LIMIT $1`;
   const params = event.lawId ? [batchSize, event.lawId] : [batchSize];
 
   const articles = await db.query<{ id: number; content: string; article_summary: string | null }>(
