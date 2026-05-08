@@ -1,5 +1,5 @@
-import * as cdk from 'aws-cdk-lib';
-import { StackInput, stackInputSchema } from './lib/stack-input';
+import type * as cdk from 'aws-cdk-lib';
+import { type StackInput, stackInputSchema } from './lib/stack-input';
 import { parse as parseToml } from 'toml';
 import * as path from 'path';
 import { readFileSync } from 'fs';
@@ -60,7 +60,7 @@ const deploy_envs: Record<string, Partial<StackInput>> = {
 // CDK Context > parameter.ts の順でパラメータを取得する
 export const getParams = (app: cdk.App): StackInput => {
   // デフォルトでは CDK Context からパラメータを取得する
-  let params = getContext(app);
+  const params = getContext(app);
 
   // env が deploy_envs で定義したものにマッチした場合は、
   // deploy_envs のパラメータを context よりも優先して使用する

@@ -1,7 +1,7 @@
-import { CfnOutput, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Stack, type StackProps } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { NagSuppressions } from 'cdk-nag';
-import { Construct } from 'constructs';
+import type { Construct } from 'constructs';
 
 /**
  * Properties for SwitchRoleForBedrockFlowsDeveloperStack
