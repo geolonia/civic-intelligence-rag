@@ -160,8 +160,8 @@ export class LawsyInfraStack extends cdk.Stack {
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
         resources: [
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
-          'arn:aws:bedrock:ap-northeast-1::inference-profile/*',
-          'arn:aws:bedrock:ap-northeast-3::inference-profile/*',
+          'arn:aws:bedrock:ap-northeast-1:*:inference-profile/jp.anthropic.claude-sonnet-4-6',
+          'arn:aws:bedrock:ap-northeast-3:*:inference-profile/jp.anthropic.claude-sonnet-4-6',
         ],
       }),
     );
