@@ -106,22 +106,31 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
-    const textStream = awslambda.HttpResponseStream.from(responseStream, {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        ...corsHeaders(),
-      },
-    });
-
+    let textStream: awslambda.HttpResponseStream | null = null;
     try {
       const db = await getPool();
+      textStream = awslambda.HttpResponseStream.from(responseStream, {
+        statusCode: 200,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          ...corsHeaders(),
+        },
+      });
       await generateLawReportStream(body.query, db, textStream);
     } catch (err) {
       console.error('generateLawReportStream error:', err);
-      textStream.write('\n\n[ERROR] レポート生成中にエラーが発生しました。');
+      if (textStream) {
+        textStream.write('\n\n[ERROR] レポート生成中にエラーが発生しました。');
+      } else {
+        const errStream = awslambda.HttpResponseStream.from(responseStream, {
+          statusCode: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+        });
+        errStream.end(JSON.stringify({ error: 'Internal Server Error' }));
+        return;
+      }
     } finally {
-      textStream.end();
+      textStream?.end();
     }
   },
 );

@@ -274,6 +274,7 @@ export class LawsyInfraStack extends cdk.Stack {
       securityGroups: [lambdaSg],
       timeout: cdk.Duration.seconds(60),
       memorySize: 1024,
+      reservedConcurrentExecutions: 5,
       environment: {
         ...sharedLambdaEnv,
         // SHA-256 hex of the API key; set via cdk deploy --context or SSM before deploy
