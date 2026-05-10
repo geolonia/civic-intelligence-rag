@@ -96,12 +96,12 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
-    if (!body.query) {
+    if (typeof body.query !== 'string' || body.query.trim().length === 0) {
       const errStream = awslambda.HttpResponseStream.from(responseStream, {
         statusCode: 400,
         headers: { 'Content-Type': 'application/json', ...corsHeaders() },
       });
-      errStream.write(JSON.stringify({ error: '"query" is required' }));
+      errStream.write(JSON.stringify({ error: '"query" must be a non-empty string' }));
       errStream.end();
       return;
     }
