@@ -19,7 +19,7 @@ import { estimateLawNamesWithVertexAI } from './vertex-grounding';
 
 const client = new AnthropicBedrock({ awsRegion: process.env.BEDROCK_REGION || 'ap-northeast-1' });
 
-const MODEL_ID = 'jp.anthropic.claude-sonnet-4-6-20251101-v1:0';
+const MODEL_ID = 'jp.anthropic.claude-sonnet-4-6';
 const EMBEDDING_MODEL = 'amazon.titan-embed-text-v2:0';
 
 // ── Bedrock Titan v2 Embedding ────────────────────────────────────────────────

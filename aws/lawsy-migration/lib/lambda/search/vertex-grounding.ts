@@ -86,11 +86,11 @@ export async function estimateLawNamesWithVertexAI(query: string): Promise<strin
   const key = await loadGcpKey();
   const accessToken = await getAccessToken(key);
   const projectId = key.project_id;
-  const location = 'us-central1';
-  const model = 'gemini-2.0-flash-001';
+  const location = process.env.VERTEX_LOCATION ?? 'asia-northeast1';
+  const model = 'gemini-2.5-flash';
 
   const today = new Date().toISOString().slice(0, 10);
-  const prompt = `以下のクエリに関連する日本の法令名を調査して、JSON形式で回答してください。JSONのみ出力してください。\n\nクエリ: ${query}`;
+  const prompt = `以下のクエリに関連する日本の法令名を調査して、{"law_names":["法令名1","法令名2"]}のJSON形式のみで回答してください。廃止・失効した法令は除外してください。\n\nクエリ: ${query}`;
   const systemInstruction = `本日の日付は ${today} です。クエリに関連する日本の法令を調査し、法令名を{"law_names":["法令名1","法令名2"]}のJSON形式のみで返してください。廃止・失効した法令は除外してください。`;
 
   const reqBody = {
@@ -100,7 +100,6 @@ export async function estimateLawNamesWithVertexAI(query: string): Promise<strin
     generationConfig: {
       temperature: 0,
       maxOutputTokens: 512,
-      responseMimeType: 'application/json',
     },
   };
 

@@ -133,7 +133,20 @@ export async function handler(event: S3Event): Promise<void> {
     console.log(`Processing ${lawId} from s3://${bucket}/${key}`);
 
     const s3Resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    const xml = await s3Resp.Body!.transformToString('utf-8');
+    const raw = await s3Resp.Body!.transformToString('utf-8');
+
+    // v2 API 移行前に JSON+base64 形式で保存されたファイルに対応
+    let xml = raw;
+    if (raw.trimStart().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw) as { law_full_text?: string };
+        if (parsed.law_full_text) {
+          xml = Buffer.from(parsed.law_full_text, 'base64').toString('utf-8');
+        }
+      } catch {
+        // JSON parse 失敗なら raw をそのまま使用
+      }
+    }
 
     const lawTitle = extractLawTitle(xml);
     const lawNo = extractLawNo(xml);

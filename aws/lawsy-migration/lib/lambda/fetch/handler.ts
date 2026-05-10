@@ -1,5 +1,5 @@
 /**
- * e-Gov fetch Lambda: 法令 XML を e-Gov API から取得して S3 source layer に保存する。
+ * e-Gov fetch Lambda: 法令 XML を e-Gov API v2 から取得して S3 source layer に保存する。
  * CloudWatch Events 毎週日曜 00:00 UTC にスケジュール実行。
  */
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -7,13 +7,33 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 const SOURCE_BUCKET = process.env.SOURCE_BUCKET!;
 
-// e-Gov 法令 API v1
-const EGOV_BASE = 'https://laws.e-gov.go.jp/api/1';
+// e-Gov 法令 API v2
+const EGOV_BASE = 'https://laws.e-gov.go.jp/api/2';
 
-interface EgovLawEntry {
-  LawId: string;
-  LawName: string;
-  LawNo: string;
+// PoC 用の取得件数上限 (全件対応は後続フェーズで実施)
+const FETCH_LIMIT = 100;
+
+interface EgovV2LawEntry {
+  law_info: {
+    law_id: string;
+    law_num: string;
+  };
+  revision_info: {
+    law_title: string;
+  };
+}
+
+interface EgovV2LawsResponse {
+  total_count: number;
+  count: number;
+  next_offset: number;
+  laws: EgovV2LawEntry[];
+}
+
+interface EgovV2LawDataResponse {
+  law_info?: { law_id: string };
+  revision_info?: { law_title: string };
+  law_full_text?: string; // base64-encoded XML
 }
 
 async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
@@ -32,24 +52,17 @@ async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
   throw lastErr;
 }
 
-async function fetchLawList(categoryId: string): Promise<EgovLawEntry[]> {
-  const url = `${EGOV_BASE}/lawdata/category/${categoryId}`;
+async function fetchLawList(): Promise<EgovV2LawEntry[]> {
+  // v2: JSON レスポンス形式
+  const url = `${EGOV_BASE}/laws?law_type=Act&offset=0&limit=${FETCH_LIMIT}`;
   const resp = await fetchWithRetry(url);
-  const xml = await resp.text();
-
-  // Parse law list from XML (simplified extraction)
-  const entries: EgovLawEntry[] = [];
-  const matches = xml.matchAll(
-    /<LawId>([^<]+)<\/LawId>[\s\S]*?<LawName>([^<]+)<\/LawName>[\s\S]*?<LawNo>([^<]+)<\/LawNo>/g,
-  );
-  for (const m of matches) {
-    entries.push({ LawId: m[1], LawName: m[2], LawNo: m[3] });
-  }
-  return entries;
+  const data = (await resp.json()) as EgovV2LawsResponse;
+  return data.laws ?? [];
 }
 
 async function fetchAndStoreLawXml(lawId: string): Promise<void> {
-  const url = `${EGOV_BASE}/lawdata/${lawId}`;
+  // v2: JSON レスポンス + law_full_text が base64 エンコードされた XML
+  const url = `${EGOV_BASE}/law_data/${lawId}?law_full_text_format=xml`;
   let resp: Response;
   try {
     resp = await fetchWithRetry(url);
@@ -57,9 +70,17 @@ async function fetchAndStoreLawXml(lawId: string): Promise<void> {
     console.warn(`Skipping ${lawId}: ${err}`);
     return;
   }
-  const xml = await resp.text();
+
+  const data = (await resp.json()) as EgovV2LawDataResponse;
+  if (!data.law_full_text) {
+    console.warn(`No law_full_text in response for ${lawId}, skipping.`);
+    return;
+  }
+
+  // base64 デコードして実際の XML を取得
+  const xml = Buffer.from(data.law_full_text, 'base64').toString('utf-8');
   if (!xml.includes('<Law')) {
-    console.warn(`No Law element in response for ${lawId}, skipping.`);
+    console.warn(`No Law element in decoded XML for ${lawId}, skipping.`);
     return;
   }
 
@@ -78,34 +99,29 @@ async function fetchAndStoreLawXml(lawId: string): Promise<void> {
 }
 
 export async function handler(): Promise<void> {
-  console.log('Starting e-Gov law fetch...');
+  console.log('Starting e-Gov law fetch (API v2)...');
 
-  // 基本法令カテゴリ (法律) を取得
-  // e-Gov category: 1=憲法, 2=法律, 3=政令, 4=省令
-  const CATEGORIES = ['2', '3', '4'];
-  const allLaws: EgovLawEntry[] = [];
-
-  for (const cat of CATEGORIES) {
-    try {
-      const laws = await fetchLawList(cat);
-      console.log(`Category ${cat}: ${laws.length} laws`);
-      allLaws.push(...laws);
-    } catch (err) {
-      console.error(`Failed to fetch category ${cat}:`, err);
-    }
+  let laws: EgovV2LawEntry[] = [];
+  try {
+    laws = await fetchLawList();
+    console.log(`Fetched ${laws.length} laws from e-Gov API v2`);
+  } catch (err) {
+    console.error('Failed to fetch law list:', err);
+    return;
   }
 
-  console.log(`Total laws to fetch: ${allLaws.length}`);
+  console.log(`Total laws to fetch: ${laws.length}`);
 
   let success = 0;
-  for (const law of allLaws) {
+  for (const entry of laws) {
+    const lawId = entry.law_info.law_id;
     try {
-      await fetchAndStoreLawXml(law.LawId);
+      await fetchAndStoreLawXml(lawId);
       success++;
     } catch (err) {
-      console.error(`Failed to store ${law.LawId}:`, err);
+      console.error(`Failed to store ${lawId}:`, err);
     }
   }
 
-  console.log(`Fetch complete: ${success}/${allLaws.length} stored to S3.`);
+  console.log(`Fetch complete: ${success}/${laws.length} stored to S3.`);
 }
