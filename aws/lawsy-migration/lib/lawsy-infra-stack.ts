@@ -1,6 +1,5 @@
 import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as events from 'aws-cdk-lib/aws-events';
@@ -8,6 +7,7 @@ import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { FunctionUrlAuthType, InvokeMode } from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -272,56 +272,28 @@ export class LawsyInfraStack extends cdk.Stack {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [lambdaSg],
-      timeout: cdk.Duration.seconds(28),
+      timeout: cdk.Duration.seconds(60),
       memorySize: 1024,
-      environment: sharedLambdaEnv,
+      environment: {
+        ...sharedLambdaEnv,
+        // SHA-256 hex of the API key; set via cdk deploy --context or SSM before deploy
+        LAWSY_API_KEY_HASH: process.env.LAWSY_API_KEY_HASH ?? '',
+      },
       logGroup: searchLogGroup,
       bundling: { minify: true, sourceMap: true, externalModules: [] },
     });
 
-    // ── API Gateway (REST, x-api-key auth) ───────────────────────────────────
-    const apiLogGroup = new logs.LogGroup(this, 'ApiLogGroup', {
-      logGroupName: `/aws/apigateway/lawsy${envName}`,
-      retention: logs.RetentionDays.ONE_MONTH,
-      encryptionKey,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    const api = new apigateway.RestApi(this, 'LawsyApi', {
-      restApiName: `lawsy-api${envName}`,
-      description: 'Lawsy AWS Migration API',
-      deployOptions: {
-        stageName: 'v1',
-        loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: false,
-        accessLogDestination: new apigateway.LogGroupLogDestination(apiLogGroup),
-        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields(),
-        throttlingRateLimit: 10,
-        throttlingBurstLimit: 20,
+    // ── Function URL (streaming, x-api-key self-implemented) ─────────────────
+    // REST API Gateway removed: 29-second hard limit caused 502 on 39-second pipeline.
+    // Function URL has no HTTP timeout (only Lambda timeout applies, set to 60s above).
+    const functionUrl = searchLambda.addFunctionUrl({
+      authType: FunctionUrlAuthType.NONE,
+      invokeMode: InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: ['*'],
+        allowedMethods: [lambda.HttpMethod.POST],
+        allowedHeaders: ['Content-Type', 'x-api-key'],
       },
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: ['POST', 'OPTIONS'],
-        allowHeaders: ['Content-Type', 'x-api-key'],
-      },
-    });
-
-    const apiKey = new apigateway.ApiKey(this, 'LawsyApiKey', {
-      apiKeyName: `lawsy-key${envName}`,
-    });
-    const usagePlan = new apigateway.UsagePlan(this, 'LawsyUsagePlan', {
-      name: `lawsy-plan${envName}`,
-      throttle: { rateLimit: 10, burstLimit: 20 },
-    });
-    usagePlan.addApiKey(apiKey);
-    usagePlan.addApiStage({ api, stage: api.deploymentStage });
-
-    const searchIntegration = new apigateway.LambdaIntegration(searchLambda, {
-      proxy: true,
-    });
-    const searchResource = api.root.addResource('search');
-    searchResource.addMethod('POST', searchIntegration, {
-      apiKeyRequired: true,
     });
 
     // ── Budget Alert ($300/month PoC guard) ──────────────────────────────────
@@ -348,10 +320,10 @@ export class LawsyInfraStack extends cdk.Stack {
     });
 
     // ── Outputs ──────────────────────────────────────────────────────────────
-    new cdk.CfnOutput(this, 'ApiEndpoint', {
-      value: api.url,
-      description: 'Lawsy API endpoint',
-      exportName: `LawsyApiEndpoint${envName}`,
+    new cdk.CfnOutput(this, 'SearchFunctionUrl', {
+      value: functionUrl.url,
+      description: 'Lawsy Search Lambda Function URL (streaming)',
+      exportName: `LawsySearchFunctionUrl${envName}`,
     });
     new cdk.CfnOutput(this, 'AuroraEndpoint', {
       value: aurora.cluster.clusterEndpoint.hostname,
