@@ -162,6 +162,9 @@ export class LawsyInfraStack extends cdk.Stack {
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
           'arn:aws:bedrock:ap-northeast-1:*:inference-profile/jp.anthropic.claude-sonnet-4-6',
           'arn:aws:bedrock:ap-northeast-3:*:inference-profile/jp.anthropic.claude-sonnet-4-6',
+          // cross-region inference profile は裏で foundation-model を invoke するため両 region 必要
+          'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-*',
+          'arn:aws:bedrock:ap-northeast-3::foundation-model/anthropic.claude-*',
         ],
       }),
     );
