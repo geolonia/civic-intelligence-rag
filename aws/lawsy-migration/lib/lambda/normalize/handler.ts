@@ -179,18 +179,18 @@ export async function handler(event: S3Event): Promise<void> {
     }
 
     console.log(`Stored ${articles.length} articles for law ${lawId} (${lawTitle})`);
-  }
 
-  // Trigger EmbedLambda asynchronously to process newly stored articles
-  const embedArn = process.env.EMBED_LAMBDA_ARN;
-  if (embedArn) {
-    await lambdaClient.send(
-      new InvokeCommand({
-        FunctionName: embedArn,
-        InvocationType: 'Event',
-        Payload: Buffer.from(JSON.stringify({ source: 'normalize' })),
-      }),
-    );
-    console.log('EmbedLambda triggered asynchronously');
+    // Trigger EmbedLambda asynchronously per-law (passes lawId so laws_embeddings is populated)
+    const embedArn = process.env.EMBED_LAMBDA_ARN;
+    if (embedArn) {
+      await lambdaClient.send(
+        new InvokeCommand({
+          FunctionName: embedArn,
+          InvocationType: 'Event',
+          Payload: Buffer.from(JSON.stringify({ source: 'normalize', lawId })),
+        }),
+      );
+      console.log(`EmbedLambda triggered asynchronously for ${lawId}`);
+    }
   }
 }
