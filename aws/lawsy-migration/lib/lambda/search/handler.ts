@@ -2,8 +2,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { Pool } from 'pg';
-import { generateLawReportStream } from './law-report-pipeline';
+import { generateLawReport, generateLawReportStream } from './law-report-pipeline';
 import type { SearchRequest } from './types';
+import { extractQuestion, isIpAllowed } from './handler-utils';
 
 let pool: Pool | null = null;
 
@@ -72,6 +73,18 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
+    // IP allow-list check (PoC: Lambda Function URL sourceIp)
+    const sourceIp = event.requestContext?.http?.sourceIp;
+    if (!isIpAllowed(sourceIp, process.env.ALLOWED_IPS ?? '')) {
+      const errStream = awslambda.HttpResponseStream.from(responseStream, {
+        statusCode: 403,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+      });
+      errStream.write(JSON.stringify({ error: 'Forbidden' }));
+      errStream.end();
+      return;
+    }
+
     const headerKey = event.headers?.['x-api-key'];
     if (!verifyApiKey(headerKey)) {
       const errStream = awslambda.HttpResponseStream.from(responseStream, {
@@ -83,9 +96,9 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
-    let body: SearchRequest;
+    let parsedBody: Record<string, unknown>;
     try {
-      body = JSON.parse(event.body ?? '{}') as SearchRequest;
+      parsedBody = JSON.parse(event.body ?? '{}') as Record<string, unknown>;
     } catch {
       const errStream = awslambda.HttpResponseStream.from(responseStream, {
         statusCode: 400,
@@ -96,16 +109,50 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
-    if (typeof body.query !== 'string' || body.query.trim().length === 0) {
+    // Dual API schema: accept {inputs.question} (genai-web) or {query} (existing)
+    const question = extractQuestion(parsedBody);
+    if (!question) {
       const errStream = awslambda.HttpResponseStream.from(responseStream, {
         statusCode: 400,
         headers: { 'Content-Type': 'application/json', ...corsHeaders() },
       });
-      errStream.write(JSON.stringify({ error: '"query" must be a non-empty string' }));
+      errStream.write(
+        JSON.stringify({ error: '"query" or "inputs.question" must be a non-empty string' }),
+      );
       errStream.end();
       return;
     }
 
+    const body: SearchRequest = {
+      query: question,
+      max_results: parsedBody.max_results as number | undefined,
+    };
+
+    // mode=sync: return buffered JSON { outputs: '<markdown>' }
+    const syncMode = event.queryStringParameters?.['mode'] === 'sync';
+
+    if (syncMode) {
+      try {
+        const db = await getPool();
+        const result = await generateLawReport(body.query, db);
+        const syncStream = awslambda.HttpResponseStream.from(responseStream, {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+        });
+        syncStream.write(JSON.stringify({ outputs: result.report }));
+        syncStream.end();
+      } catch (err) {
+        console.error('generateLawReport error (sync mode):', err);
+        const errStream = awslambda.HttpResponseStream.from(responseStream, {
+          statusCode: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+        });
+        errStream.end(JSON.stringify({ error: 'Internal Server Error' }));
+      }
+      return;
+    }
+
+    // Default: streaming mode (existing behavior)
     let textStream: awslambda.HttpResponseStream | null = null;
     try {
       const db = await getPool();

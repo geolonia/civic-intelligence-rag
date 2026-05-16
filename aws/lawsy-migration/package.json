@@ -12,7 +12,7 @@
     "diff": "cdk diff",
     "synth": "cdk synth",
     "lint": "eslint . --ext .ts",
-    "test": "jest"
+    "test": "tsc && node --test dist/lib/lambda/search/handler-utils.test.js"
   },
   "devDependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.29.1",

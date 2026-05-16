@@ -279,6 +279,10 @@ export class LawsyInfraStack extends cdk.Stack {
         ...sharedLambdaEnv,
         // SHA-256 hex of the API key; set via cdk deploy --context or SSM before deploy
         LAWSY_API_KEY_HASH: process.env.LAWSY_API_KEY_HASH ?? '',
+        // Comma-separated IP allow-list for Lambda-level IP filtering (PoC).
+        // Replace PLACEHOLDER with genai-web NAT Gateway IP(s) before deploy.
+        // Empty string = no restriction (staging/dev).
+        ALLOWED_IPS: 'PLACEHOLDER',
       },
       logGroup: searchLogGroup,
       bundling: { minify: true, sourceMap: true, externalModules: [] },
