@@ -56,7 +56,10 @@ function verifyApiKey(headerKey: string | undefined): boolean {
 export const handler = awslambda.streamifyResponse(
   async (event: APIGatewayProxyEventV2, responseStream: awslambda.HttpResponseStream, _context: Context) => {
     const method = event.requestContext.http.method;
-    const path = event.requestContext?.http?.path ?? '/';
+    // Lambda Function URL: rawPath preserves trailing slash; requestContext.http.path strips it.
+    // Use rawPath so "/requests/" matches correctly.
+    const rawPath = (event as unknown as { rawPath?: string }).rawPath;
+    const path = rawPath ?? event.requestContext?.http?.path ?? '/';
 
     if (method === 'OPTIONS') {
       const optStream = awslambda.HttpResponseStream.from(responseStream, {

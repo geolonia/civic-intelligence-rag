@@ -41,8 +41,12 @@ export interface WorkerEvent {
   question: string;
 }
 
-export async function handler(event: WorkerEvent, jobStore?: IJobStore): Promise<void> {
-  const store = jobStore ?? new DynamoDBJobStore();
+function isJobStore(x: unknown): x is IJobStore {
+  return x != null && typeof (x as IJobStore).updateProgress === 'function';
+}
+
+export async function handler(event: WorkerEvent, maybeJobStore?: unknown): Promise<void> {
+  const store = isJobStore(maybeJobStore) ? maybeJobStore : new DynamoDBJobStore();
   const { jobId, question } = event;
 
   try {
