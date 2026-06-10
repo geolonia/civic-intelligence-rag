@@ -280,9 +280,9 @@ export class LawsyInfraStack extends cdk.Stack {
         // SHA-256 hex of the API key; set via cdk deploy --context or SSM before deploy
         LAWSY_API_KEY_HASH: process.env.LAWSY_API_KEY_HASH ?? '',
         // Comma-separated IP allow-list for Lambda-level IP filtering (PoC).
-        // Replace PLACEHOLDER with genai-web NAT Gateway IP(s) before deploy.
-        // Empty string = no restriction (staging/dev).
-        ALLOWED_IPS: 'PLACEHOLDER',
+        // Default: Mac mini egress IP + GenU InvokeExAppVpc NAT EIP×2 (cmd_507).
+        // Override via ALLOWED_IPS env var on cdk deploy.
+        ALLOWED_IPS: process.env.ALLOWED_IPS ?? '118.236.165.154,18.180.137.106,18.182.216.221',
       },
       logGroup: searchLogGroup,
       bundling: { minify: true, sourceMap: true, externalModules: [] },
