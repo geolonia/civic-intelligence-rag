@@ -105,7 +105,17 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
-    // ── Existing sync / streaming routes (POST / only) ────────────────────
+    // ── Existing sync / streaming routes (root path POST / only) ────────────
+    if (path !== '/') {
+      const errStream = awslambda.HttpResponseStream.from(responseStream, {
+        statusCode: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+      });
+      errStream.write(JSON.stringify({ error: 'Not found' }));
+      errStream.end();
+      return;
+    }
+
     if (method !== 'POST') {
       const errStream = awslambda.HttpResponseStream.from(responseStream, {
         statusCode: 405,
@@ -232,9 +242,11 @@ async function handleAsyncRequest(
     return;
   }
 
+  const jobStore = new DynamoDBJobStore();
+  let jobId: string | null = null;
+
   try {
-    const jobStore = new DynamoDBJobStore();
-    const jobId = await jobStore.createJob({ question });
+    jobId = await jobStore.createJob({ question });
 
     const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION });
     await lambdaClient.send(
@@ -254,6 +266,11 @@ async function handleAsyncRequest(
     okStream.end();
   } catch (err) {
     console.error('handleAsyncRequest error:', err);
+    // Mark job as ERROR so it doesn't stay PENDING forever
+    if (jobId) {
+      const message = err instanceof Error ? err.message : '非同期処理の開始に失敗しました';
+      await jobStore.failJob(jobId, { message }).catch((e) => console.error('failJob error:', e));
+    }
     const errStream = awslambda.HttpResponseStream.from(responseStream, {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders() },

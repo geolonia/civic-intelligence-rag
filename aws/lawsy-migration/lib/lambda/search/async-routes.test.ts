@@ -65,7 +65,8 @@ describe('buildStatusResponse', () => {
     };
     const res = buildStatusResponse(job);
     assert.equal(res.status, 'ERROR');
-    assert.deepEqual(res.error, { message: '処理失敗', details: 'timeout' });
+    // details (stack trace) is stripped from public response for security
+    assert.deepEqual(res.error, { message: '処理失敗' });
   });
 
   it('base64-encodes outputs in artifacts', () => {

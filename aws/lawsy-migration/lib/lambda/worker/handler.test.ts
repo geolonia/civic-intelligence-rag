@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { InMemoryJobStore } from '../search/job-store.js';
-import { type WorkerEvent, handler } from './handler.js';
+import { type WorkerEvent, type WorkerDeps, handler } from './handler.js';
+import type { Pool } from 'pg';
+
+const mockDb = {} as Pool;
+const mockGetPool = async () => mockDb;
+
+// Mock generateLawReport that succeeds immediately
+const successReportFn = async (_q: string, _db: Pool) => ({ report: '## テストレポート\n成功' });
+
+// Mock that throws on call
+const failReportFn = async (_q: string, _db: Pool): Promise<{ report: string }> => {
+  throw new Error('generateLawReport simulated failure');
+};
 
 describe('worker handler', () => {
   let store: InMemoryJobStore;
@@ -10,7 +22,7 @@ describe('worker handler', () => {
     store = new InMemoryJobStore();
   });
 
-  it('updates progress in correct order when generateLawReport succeeds', async () => {
+  it('updates progress in correct order and COMPLETED when generateLawReport succeeds', async () => {
     const jobId = await store.createJob({ question: 'test question' });
 
     const progressLog: string[] = [];
@@ -26,54 +38,55 @@ describe('worker handler', () => {
     };
 
     const event: WorkerEvent = { jobId, question: 'test question' };
-
-    // handler calls generateLawReport internally which requires DB/Bedrock
-    // We test the progress sequence by injecting a mock store and verifying
-    // that IN_PROGRESS transitions happen before COMPLETED.
-    // (generateLawReport will fail without DB, but we verify failJob is called)
-    await handler(event, wrappedStore);
+    const deps: WorkerDeps = { jobStore: wrappedStore, reportFn: successReportFn, getPoolFn: mockGetPool };
+    await handler(event, undefined, deps);
 
     const finalJob = await store.getJob(jobId);
     assert.ok(finalJob);
+    assert.equal(finalJob.status, 'COMPLETED');
+    assert.ok(finalJob.outputs?.includes('テストレポート'));
 
-    // Either COMPLETED or ERROR (no DB in test env), but progress updates must happen
-    assert.ok(
-      finalJob.status === 'COMPLETED' || finalJob.status === 'ERROR',
-      `Expected COMPLETED or ERROR, got ${finalJob.status}`,
-    );
-
-    // Progress must have been updated at least once before final state
     assert.ok(progressLog.length >= 1, 'Expected at least one progress update');
     assert.equal(progressLog[0], '法令データを検索中...', 'First progress must be 法令データを検索中...');
   });
 
-  it('sets ERROR status when processing fails', async () => {
-    const jobId = await store.createJob({ question: 'bad question' });
+  it('sets ERROR status and calls failJob when generateLawReport throws', async () => {
+    const jobId = await store.createJob({ question: 'fail question' });
 
-    // Store that throws on completeJob to simulate DB error
+    const event: WorkerEvent = { jobId, question: 'fail question' };
+    const deps: WorkerDeps = { jobStore: store, reportFn: failReportFn, getPoolFn: mockGetPool };
+    await handler(event, undefined, deps);
+
+    const finalJob = await store.getJob(jobId);
+    assert.ok(finalJob);
+    assert.equal(finalJob.status, 'ERROR');
+    assert.equal(finalJob.error?.message, 'generateLawReport simulated failure');
+  });
+
+  it('sets ERROR when completeJob throws after successful report generation', async () => {
+    const jobId = await store.createJob({ question: 'complete-fail question' });
+
     const errorStore = {
       createJob: store.createJob.bind(store),
       updateProgress: async (id: string, progress: string) => store.updateProgress(id, progress),
-      completeJob: async (_id: string, _outputs: string) => {
+      completeJob: async (_id: string, _outputs: string): Promise<void> => {
         throw new Error('DynamoDB connection failed');
       },
       failJob: store.failJob.bind(store),
       getJob: store.getJob.bind(store),
     };
 
-    const event: WorkerEvent = { jobId, question: 'bad question' };
-
-    // generateLawReport will fail (no DB), which calls failJob
-    await handler(event, errorStore);
+    const event: WorkerEvent = { jobId, question: 'complete-fail question' };
+    const deps: WorkerDeps = { jobStore: errorStore, reportFn: successReportFn, getPoolFn: mockGetPool };
+    await handler(event, undefined, deps);
 
     const finalJob = await store.getJob(jobId);
     assert.ok(finalJob);
-    // failJob was called directly on store (not errorStore), so it succeeds
     assert.equal(finalJob.status, 'ERROR');
-    assert.ok(finalJob.error?.message);
+    assert.equal(finalJob.error?.message, 'DynamoDB connection failed');
   });
 
-  it('calls failJob with error message on exception', async () => {
+  it('calls failJob with error message on exception during progress update', async () => {
     const failedJobId = await store.createJob({ question: 'q' });
     const errors: Array<{ message: string }> = [];
 
@@ -90,7 +103,8 @@ describe('worker handler', () => {
       getJob: store.getJob.bind(store),
     };
 
-    await handler({ jobId: failedJobId, question: 'q' }, errorCapture);
+    const deps: WorkerDeps = { jobStore: errorCapture, reportFn: successReportFn, getPoolFn: mockGetPool };
+    await handler({ jobId: failedJobId, question: 'q' }, undefined, deps);
 
     assert.equal(errors.length, 1);
     assert.equal(errors[0].message, 'progress update failed');

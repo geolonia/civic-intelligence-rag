@@ -199,7 +199,13 @@ export class LawsyInfraStack extends cdk.Stack {
         ],
       }),
     );
-    jobsTable.grantReadWriteData(workerRole);
+    // worker: UpdateItem only (updateProgress, completeJob, failJob)
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:UpdateItem'],
+        resources: [jobsTable.tableArn],
+      }),
+    );
 
     // ── Lambda Layer (shared deps: pg, @anthropic-ai/sdk) ────────────────────
     // NOTE: Layer bundled from lib/lambda/layer/ at deploy time.
@@ -347,8 +353,13 @@ export class LawsyInfraStack extends cdk.Stack {
       bundling: { minify: true, sourceMap: true, externalModules: [] },
     });
 
-    // Grant searchLambda DynamoDB access + worker Lambda invoke
-    jobsTable.grantReadWriteData(searchRole);
+    // Grant searchLambda specific DynamoDB actions (PutItem, GetItem, UpdateItem only)
+    searchRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:PutItem', 'dynamodb:GetItem', 'dynamodb:UpdateItem'],
+        resources: [jobsTable.tableArn],
+      }),
+    );
     searchRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['lambda:InvokeFunction'],

@@ -55,53 +55,80 @@ export class DynamoDBJobStore implements IJobStore {
   }
 
   async updateProgress(jobId: string, progress: string): Promise<void> {
-    await this.docClient.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: { jobId },
-        UpdateExpression: 'SET #s = :status, progress = :progress, updated_at = :now',
-        ExpressionAttributeNames: { '#s': 'status' },
-        ExpressionAttributeValues: {
-          ':status': 'IN_PROGRESS',
-          ':progress': progress,
-          ':now': new Date().toISOString(),
-        },
-      }),
-    );
+    try {
+      await this.docClient.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { jobId },
+          // Only transition if still non-terminal (PENDING or IN_PROGRESS)
+          ConditionExpression: '#s IN (:pending, :inprogress)',
+          UpdateExpression: 'SET #s = :status, progress = :progress, updated_at = :now',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: {
+            ':status': 'IN_PROGRESS',
+            ':progress': progress,
+            ':now': new Date().toISOString(),
+            ':pending': 'PENDING',
+            ':inprogress': 'IN_PROGRESS',
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return;
+      throw err;
+    }
   }
 
   async completeJob(jobId: string, outputs: string): Promise<void> {
-    await this.docClient.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: { jobId },
-        UpdateExpression:
-          'SET #s = :status, progress = :progress, outputs = :outputs, updated_at = :now',
-        ExpressionAttributeNames: { '#s': 'status' },
-        ExpressionAttributeValues: {
-          ':status': 'COMPLETED',
-          ':progress': '回答の生成が完了しました',
-          ':outputs': outputs,
-          ':now': new Date().toISOString(),
-        },
-      }),
-    );
+    try {
+      await this.docClient.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { jobId },
+          // Only transition from non-terminal states
+          ConditionExpression: '#s IN (:pending, :inprogress)',
+          UpdateExpression:
+            'SET #s = :status, progress = :progress, outputs = :outputs, updated_at = :now',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: {
+            ':status': 'COMPLETED',
+            ':progress': '回答の生成が完了しました',
+            ':outputs': outputs,
+            ':now': new Date().toISOString(),
+            ':pending': 'PENDING',
+            ':inprogress': 'IN_PROGRESS',
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return;
+      throw err;
+    }
   }
 
   async failJob(jobId: string, error: { message: string; details?: string }): Promise<void> {
-    await this.docClient.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: { jobId },
-        UpdateExpression: 'SET #s = :status, #e = :error, updated_at = :now',
-        ExpressionAttributeNames: { '#s': 'status', '#e': 'error' },
-        ExpressionAttributeValues: {
-          ':status': 'ERROR',
-          ':error': error,
-          ':now': new Date().toISOString(),
-        },
-      }),
-    );
+    try {
+      await this.docClient.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { jobId },
+          // Only transition from non-terminal states
+          ConditionExpression: '#s IN (:pending, :inprogress)',
+          UpdateExpression: 'SET #s = :status, #e = :error, updated_at = :now',
+          ExpressionAttributeNames: { '#s': 'status', '#e': 'error' },
+          ExpressionAttributeValues: {
+            ':status': 'ERROR',
+            ':error': error,
+            ':now': new Date().toISOString(),
+            ':pending': 'PENDING',
+            ':inprogress': 'IN_PROGRESS',
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return;
+      throw err;
+    }
   }
 
   async getJob(jobId: string): Promise<Job | null> {

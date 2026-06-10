@@ -50,7 +50,8 @@ export function buildStatusResponse(job: Job): StatusResponse {
   }
 
   if (job.status === 'ERROR' && job.error) {
-    return { ...base, error: job.error };
+    // Return user-facing message only; stack traces stay in internal store
+    return { ...base, error: { message: job.error.message } };
   }
 
   return base;

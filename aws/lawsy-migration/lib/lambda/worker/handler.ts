@@ -41,22 +41,43 @@ export interface WorkerEvent {
   question: string;
 }
 
+type ReportFn = (question: string, db: Pool) => Promise<{ report: string }>;
+type GetPoolFn = () => Promise<Pool>;
+
 function isJobStore(x: unknown): x is IJobStore {
   return x != null && typeof (x as IJobStore).updateProgress === 'function';
 }
 
-export async function handler(event: WorkerEvent, maybeJobStore?: unknown): Promise<void> {
-  const store = isJobStore(maybeJobStore) ? maybeJobStore : new DynamoDBJobStore();
+function isFunc(x: unknown): x is (...a: unknown[]) => unknown {
+  return typeof x === 'function';
+}
+
+export interface WorkerDeps {
+  jobStore?: IJobStore;
+  reportFn?: ReportFn;
+  getPoolFn?: GetPoolFn;
+}
+
+// Lambda entry point: Lambda passes (event, context) — context is ignored.
+// Tests pass { jobStore, reportFn, getPoolFn } as third arg for dependency injection.
+export async function handler(
+  event: WorkerEvent,
+  _context?: unknown,
+  deps?: WorkerDeps,
+): Promise<void> {
+  const store = deps?.jobStore ?? new DynamoDBJobStore();
+  const reportFn: ReportFn = isFunc(deps?.reportFn) ? (deps!.reportFn as ReportFn) : generateLawReport;
+  const poolFn: GetPoolFn = isFunc(deps?.getPoolFn) ? (deps!.getPoolFn as GetPoolFn) : getPool;
   const { jobId, question } = event;
 
   try {
     await store.updateProgress(jobId, '法令データを検索中...');
 
-    const db = await getPool();
+    const db = await poolFn();
 
     await store.updateProgress(jobId, '法令文書を解析中...');
 
-    const result = await generateLawReport(question, db);
+    const result = await reportFn(question, db);
 
     await store.updateProgress(jobId, '回答を整形中...');
 
