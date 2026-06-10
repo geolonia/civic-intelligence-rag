@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
@@ -87,6 +88,15 @@ export class LawsyInfraStack extends cdk.Stack {
       envName,
     });
 
+    // ── DynamoDB: Async job store ─────────────────────────────────────────────
+    const jobsTable = new dynamodb.Table(this, 'JobsTable', {
+      tableName: `lawsy-jobs${envName}`,
+      partitionKey: { name: 'jobId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: 'ttl',
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     // ── GCP Vertex AI key secret (pre-provisioned by 殿) ────────────────────
     const gcpVertexSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
@@ -168,6 +178,28 @@ export class LawsyInfraStack extends cdk.Stack {
         ],
       }),
     );
+
+    // ── workerRole: Aurora + Bedrock (same as searchRole) + DynamoDB rw ──────
+    const workerRole = new iam.Role(this, 'WorkerRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [vpcPolicy],
+    });
+    aurora.secret.grantRead(workerRole);
+    gcpVertexSecret.grantRead(workerRole);
+    encryptionKey.grantDecrypt(workerRole);
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+        resources: [
+          `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+          'arn:aws:bedrock:ap-northeast-1:*:inference-profile/jp.anthropic.claude-sonnet-4-6',
+          'arn:aws:bedrock:ap-northeast-3:*:inference-profile/jp.anthropic.claude-sonnet-4-6',
+          'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-*',
+          'arn:aws:bedrock:ap-northeast-3::foundation-model/anthropic.claude-*',
+        ],
+      }),
+    );
+    jobsTable.grantReadWriteData(workerRole);
 
     // ── Lambda Layer (shared deps: pg, @anthropic-ai/sdk) ────────────────────
     // NOTE: Layer bundled from lib/lambda/layer/ at deploy time.
@@ -256,6 +288,32 @@ export class LawsyInfraStack extends cdk.Stack {
     embedLambda.grantInvoke(normalizeLambda);
     normalizeLambda.addEnvironment('EMBED_LAMBDA_ARN', embedLambda.functionArn);
 
+    // ── Lambda: Async Worker (non-streaming RAG + DynamoDB progress updates) ─
+    const workerLogGroup = new logs.LogGroup(this, 'WorkerLogGroup', {
+      logGroupName: `/aws/lambda/lawsy-worker${envName}`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      encryptionKey,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const workerLambda = new lambdaNodejs.NodejsFunction(this, 'WorkerLambda', {
+      entry: path.join(__dirname, 'lambda/worker/handler.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      role: workerRole,
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [lambdaSg],
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 1024,
+      environment: {
+        ...sharedLambdaEnv,
+        LAWSY_JOBS_TABLE: jobsTable.tableName,
+      },
+      logGroup: workerLogGroup,
+      bundling: { minify: true, sourceMap: true, externalModules: [] },
+    });
+
     // ── Lambda: Search / Report Generation (main API handler) ───────────────
     const searchLogGroup = new logs.LogGroup(this, 'SearchLogGroup', {
       logGroupName: `/aws/lambda/lawsy-search${envName}`,
@@ -277,16 +335,26 @@ export class LawsyInfraStack extends cdk.Stack {
       reservedConcurrentExecutions: 5,
       environment: {
         ...sharedLambdaEnv,
-        // SHA-256 hex of the API key; set via cdk deploy --context or SSM before deploy
+        // SHA-256 hex of the API key; set via LAWSY_API_KEY_HASH env at deploy time
         LAWSY_API_KEY_HASH: process.env.LAWSY_API_KEY_HASH ?? '',
         // Comma-separated IP allow-list for Lambda-level IP filtering (PoC).
-        // Replace PLACEHOLDER with genai-web NAT Gateway IP(s) before deploy.
-        // Empty string = no restriction (staging/dev).
-        ALLOWED_IPS: 'PLACEHOLDER',
+        // Set via ALLOWED_IPS env var on cdk deploy; PLACEHOLDER disables all access.
+        ALLOWED_IPS: process.env.ALLOWED_IPS ?? 'PLACEHOLDER',
+        LAWSY_JOBS_TABLE: jobsTable.tableName,
+        WORKER_LAMBDA_ARN: workerLambda.functionArn,
       },
       logGroup: searchLogGroup,
       bundling: { minify: true, sourceMap: true, externalModules: [] },
     });
+
+    // Grant searchLambda DynamoDB access + worker Lambda invoke
+    jobsTable.grantReadWriteData(searchRole);
+    searchRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['lambda:InvokeFunction'],
+        resources: [workerLambda.functionArn],
+      }),
+    );
 
     // ── Function URL (streaming, x-api-key self-implemented) ─────────────────
     // REST API Gateway removed: 29-second hard limit caused 502 on 39-second pipeline.
@@ -296,7 +364,7 @@ export class LawsyInfraStack extends cdk.Stack {
       invokeMode: InvokeMode.RESPONSE_STREAM,
       cors: {
         allowedOrigins: ['*'],
-        allowedMethods: [lambda.HttpMethod.POST],
+        allowedMethods: [lambda.HttpMethod.POST, lambda.HttpMethod.GET],
         allowedHeaders: ['Content-Type', 'x-api-key'],
       },
     });
@@ -345,5 +413,6 @@ export class LawsyInfraStack extends cdk.Stack {
     void fetchLambda;
     void normalizeLambda;
     void embedLambda;
+    void workerLambda;
   }
 }

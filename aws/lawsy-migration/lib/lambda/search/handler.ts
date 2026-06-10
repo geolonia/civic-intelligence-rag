@@ -1,10 +1,13 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { Pool } from 'pg';
+import { buildRequestAcceptedResponse, buildStatusResponse } from './async-routes';
+import { extractQuestion, isIpAllowed } from './handler-utils';
+import { DynamoDBJobStore } from './job-store';
 import { generateLawReport, generateLawReportStream } from './law-report-pipeline';
 import type { SearchRequest } from './types';
-import { extractQuestion, isIpAllowed } from './handler-utils';
 
 let pool: Pool | null = null;
 
@@ -53,6 +56,7 @@ function verifyApiKey(headerKey: string | undefined): boolean {
 export const handler = awslambda.streamifyResponse(
   async (event: APIGatewayProxyEventV2, responseStream: awslambda.HttpResponseStream, _context: Context) => {
     const method = event.requestContext.http.method;
+    const path = event.requestContext?.http?.path ?? '/';
 
     if (method === 'OPTIONS') {
       const optStream = awslambda.HttpResponseStream.from(responseStream, {
@@ -60,16 +64,6 @@ export const handler = awslambda.streamifyResponse(
         headers: corsHeaders(),
       });
       optStream.end();
-      return;
-    }
-
-    if (method !== 'POST') {
-      const errStream = awslambda.HttpResponseStream.from(responseStream, {
-        statusCode: 405,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders() },
-      });
-      errStream.write(JSON.stringify({ error: 'Method not allowed' }));
-      errStream.end();
       return;
     }
 
@@ -92,6 +86,29 @@ export const handler = awslambda.streamifyResponse(
         headers: { 'Content-Type': 'application/json', ...corsHeaders() },
       });
       errStream.write(JSON.stringify({ error: 'Unauthorized' }));
+      errStream.end();
+      return;
+    }
+
+    // ── Async ExApp routes ─────────────────────────────────────────────────
+    if (path === '/requests/' && method === 'POST') {
+      await handleAsyncRequest(event, responseStream);
+      return;
+    }
+
+    if (path.startsWith('/status/') && method === 'GET') {
+      const jobId = path.replace(/^\/status\//, '');
+      await handleStatusCheck(jobId, responseStream);
+      return;
+    }
+
+    // ── Existing sync / streaming routes (POST / only) ────────────────────
+    if (method !== 'POST') {
+      const errStream = awslambda.HttpResponseStream.from(responseStream, {
+        statusCode: 405,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+      });
+      errStream.write(JSON.stringify({ error: 'Method not allowed' }));
       errStream.end();
       return;
     }
@@ -182,10 +199,115 @@ export const handler = awslambda.streamifyResponse(
   },
 );
 
+async function handleAsyncRequest(
+  event: APIGatewayProxyEventV2,
+  responseStream: awslambda.HttpResponseStream,
+): Promise<void> {
+  let parsedBody: Record<string, unknown>;
+  try {
+    parsedBody = JSON.parse(event.body ?? '{}') as Record<string, unknown>;
+  } catch {
+    const errStream = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+    });
+    errStream.write(JSON.stringify({ error: 'Invalid JSON' }));
+    errStream.end();
+    return;
+  }
+
+  const question = extractQuestion(parsedBody);
+  if (!question) {
+    const errStream = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+    });
+    errStream.write(
+      JSON.stringify({ error: '"query" or "inputs.question" must be a non-empty string' }),
+    );
+    errStream.end();
+    return;
+  }
+
+  try {
+    const jobStore = new DynamoDBJobStore();
+    const jobId = await jobStore.createJob({ question });
+
+    const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION });
+    await lambdaClient.send(
+      new InvokeCommand({
+        FunctionName: process.env.WORKER_LAMBDA_ARN!,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ jobId, question })),
+      }),
+    );
+
+    const resp = buildRequestAcceptedResponse(jobId);
+    const okStream = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: 202,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+    });
+    okStream.write(JSON.stringify(resp));
+    okStream.end();
+  } catch (err) {
+    console.error('handleAsyncRequest error:', err);
+    const errStream = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+    });
+    errStream.end(JSON.stringify({ error: 'Internal Server Error' }));
+  }
+}
+
+async function handleStatusCheck(
+  jobId: string,
+  responseStream: awslambda.HttpResponseStream,
+): Promise<void> {
+  if (!jobId) {
+    const errStream = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+    });
+    errStream.write(JSON.stringify({ error: 'jobId required' }));
+    errStream.end();
+    return;
+  }
+
+  try {
+    const jobStore = new DynamoDBJobStore();
+    const job = await jobStore.getJob(jobId);
+
+    if (!job) {
+      const errStream = awslambda.HttpResponseStream.from(responseStream, {
+        statusCode: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+      });
+      errStream.write(JSON.stringify({ error: 'Job not found' }));
+      errStream.end();
+      return;
+    }
+
+    const statusResp = buildStatusResponse(job);
+    const okStream = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+    });
+    okStream.write(JSON.stringify(statusResp));
+    okStream.end();
+  } catch (err) {
+    console.error('handleStatusCheck error:', err);
+    const errStream = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+    });
+    errStream.end(JSON.stringify({ error: 'Internal Server Error' }));
+  }
+}
+
 function corsHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, x-api-key',
   };
 }
