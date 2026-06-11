@@ -79,29 +79,21 @@ NAT_EIP_COUNT=$(echo "$NAT_EIPS" | tr ',' '\n' | grep -c .)
 echo "    NAT EIP count=${NAT_EIP_COUNT} ✓"
 
 echo "[4/5] Mac mini egress IP を取得中..."
-MAC_MINI_IP=$(curl -s --max-time 10 https://api.ipify.org)
-
-if [ -z "$MAC_MINI_IP" ]; then
-  echo "[ERROR] Mac mini egress IP の取得に失敗しました" >&2
-  exit 1
+MAC_MINI_IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null) || { echo "ERROR: ipify request failed" >&2; exit 1; }
+if ! echo "$MAC_MINI_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+  echo "ERROR: Invalid IP format from ipify" >&2; exit 1
 fi
 echo "    Mac mini IP 取得完了 ✓"
 
-ALLOWED_IPS="${NAT_EIPS},${MAC_MINI_IP}"
-ALLOWED_IPS_COUNT=$(echo "$ALLOWED_IPS" | tr ',' '\n' | grep -c .)
-
-if [ "$ALLOWED_IPS_COUNT" -lt 3 ]; then
-  echo "[ERROR] ALLOWED_IPS が 3 件未満です: count=${ALLOWED_IPS_COUNT}" >&2
-  echo "  NAT EIPs: ${NAT_EIPS}" >&2
-  echo "  Mac mini IP: ${MAC_MINI_IP}" >&2
-  exit 1
+if [ "$NAT_EIP_COUNT" -lt 2 ]; then
+  echo "ERROR: Expected 2 NAT EIPs, got ${NAT_EIP_COUNT} (check GenerativeAiUseCasesStack)" >&2; exit 1
 fi
-echo "    ALLOWED_IPS count=${ALLOWED_IPS_COUNT} ✓"
+ALLOWED_IPS="${NAT_EIPS},${MAC_MINI_IP}"
 
 echo "[5/5] deploy 準備完了"
 echo "    STACK: ${STACK_NAME}"
 echo "    HASH_LEN: ${HASH_LEN}"
-echo "    ALLOWED_IPS_COUNT: ${ALLOWED_IPS_COUNT}"
+echo "    ALLOWED_IPS_COUNT: $(echo "$ALLOWED_IPS" | tr ',' '\n' | grep -c .)"
 echo "    AWS_PROFILE: ${AWS_PROFILE}"
 
 if [ "$DRY_RUN" = true ]; then
@@ -124,36 +116,23 @@ LAWSY_API_KEY_HASH="${LAWSY_API_KEY_HASH}" \
 echo ""
 echo "✅ deploy 完了。Lambda 環境変数を検証中..."
 
-SEARCH_LAMBDA=$(aws lambda list-functions \
-  --profile "${AWS_PROFILE}" \
-  --query "Functions[?contains(FunctionName,'LawsyMigrationStack') && contains(FunctionName,'SearchLambda')].FunctionName" \
-  --output text 2>/dev/null | head -1)
-
-if [ -z "$SEARCH_LAMBDA" ]; then
-  echo "[WARN] SearchLambda 名の自動取得に失敗しました。手動確認してください。" >&2
-else
-  ACTUAL_HASH=$(aws lambda get-function-configuration \
-    --function-name "${SEARCH_LAMBDA}" \
-    --profile "${AWS_PROFILE}" \
-    --query "Environment.Variables.LAWSY_API_KEY_HASH" \
-    --output text 2>/dev/null)
-  ACTUAL_IPS=$(aws lambda get-function-configuration \
-    --function-name "${SEARCH_LAMBDA}" \
-    --profile "${AWS_PROFILE}" \
-    --query "Environment.Variables.ALLOWED_IPS" \
-    --output text 2>/dev/null)
-
-  ACTUAL_HASH_LEN="${#ACTUAL_HASH}"
-  ACTUAL_IPS_COUNT=$(echo "$ACTUAL_IPS" | tr ',' '\n' | grep -c .)
-
-  if [ "$ACTUAL_HASH_LEN" -ne 64 ]; then
-    echo "[ERROR] deploy 後検証 FAIL: HASH len=${ACTUAL_HASH_LEN} (expected=64)" >&2
-    exit 1
-  fi
-  if [ "$ACTUAL_IPS_COUNT" -lt 3 ]; then
-    echo "[ERROR] deploy 後検証 FAIL: ALLOWED_IPS count=${ACTUAL_IPS_COUNT} (expected>=3)" >&2
-    exit 1
-  fi
-
-  echo "✅ 検証 PASS: HASH len=${ACTUAL_HASH_LEN} / ALLOWED_IPS count=${ACTUAL_IPS_COUNT}"
+SEARCH_FUNC=$(aws lambda list-functions --profile "${AWS_PROFILE}" \
+  --query "Functions[?starts_with(FunctionName,'LawsyMigrationStack-') && ends_with(FunctionName,'-searchFunction')].FunctionName | [0]" \
+  --output text 2>/dev/null)
+if [ -z "$SEARCH_FUNC" ] || [ "$SEARCH_FUNC" = "None" ]; then
+  echo "ERROR: SearchLambda not found under LawsyMigrationStack" >&2; exit 1
 fi
+
+DEPLOYED_HASH=$(aws lambda get-function-configuration \
+  --function-name "$SEARCH_FUNC" --profile "${AWS_PROFILE}" \
+  --query "Environment.Variables.LAWSY_API_KEY_HASH" --output text)
+if [ "$DEPLOYED_HASH" != "$LAWSY_API_KEY_HASH" ]; then
+  echo "ERROR: Deployed HASH mismatch" >&2; exit 1
+fi
+DEPLOYED_IPS=$(aws lambda get-function-configuration \
+  --function-name "$SEARCH_FUNC" --profile "${AWS_PROFILE}" \
+  --query "Environment.Variables.ALLOWED_IPS" --output text)
+if [ "$DEPLOYED_IPS" != "$ALLOWED_IPS" ]; then
+  echo "ERROR: Deployed ALLOWED_IPS mismatch" >&2; exit 1
+fi
+echo "✅ 検証 PASS: HASH and ALLOWED_IPS match"
