@@ -60,7 +60,7 @@ fi
 source "$GET_SECRET_SCRIPT"
 
 # ── 依存コマンド確認 ──────────────────────────────────────────────────────────
-for cmd in aws curl openssl awk; do
+for cmd in aws curl openssl awk npx; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "[ERROR] Required command not found: $cmd" >&2
     exit 1
@@ -114,8 +114,8 @@ if ! echo "$MAC_MINI_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{
 fi
 echo "    Mac mini IP 取得完了 ✓"
 
-if [ "$NAT_EIP_COUNT" -lt 2 ]; then
-  echo "ERROR: Expected 2 NAT EIPs, got ${NAT_EIP_COUNT} (check GenerativeAiUseCasesStack)" >&2; exit 1
+if [ "$NAT_EIP_COUNT" -ne 2 ]; then
+  echo "ERROR: Expected exactly 2 NAT EIPs, got ${NAT_EIP_COUNT} (check GenerativeAiUseCasesStack)" >&2; exit 1
 fi
 ALLOWED_IPS="${NAT_EIPS},${MAC_MINI_IP}"
 
@@ -145,12 +145,14 @@ LAWSY_API_KEY_HASH="${LAWSY_API_KEY_HASH}" \
 echo ""
 echo "✅ deploy 完了。Lambda 環境変数を検証中..."
 
-SEARCH_FUNC=$(aws lambda list-functions --profile "${AWS_PROFILE}" \
-  --query "Functions[?starts_with(FunctionName,'LawsyMigrationStack-') && ends_with(FunctionName,'-searchFunction')].FunctionName | [0]" \
-  --output text 2>/dev/null)
-if [ -z "$SEARCH_FUNC" ] || [ "$SEARCH_FUNC" = "None" ]; then
-  echo "ERROR: SearchLambda not found under LawsyMigrationStack" >&2; exit 1
+STACK_PREFIX="${STACK_NAME%-dev}"  # "LawsyMigrationStack" (strip -dev suffix)
+mapfile -t SEARCH_FUNCS < <(aws lambda list-functions --profile "${AWS_PROFILE}" \
+  --query "Functions[?starts_with(FunctionName,'${STACK_PREFIX}-') && ends_with(FunctionName,'-searchFunction')].FunctionName" \
+  --output text 2>/dev/null | tr '\t' '\n' | grep .)
+if [ "${#SEARCH_FUNCS[@]}" -ne 1 ]; then
+  echo "ERROR: Expected exactly 1 SearchLambda under ${STACK_NAME}, got ${#SEARCH_FUNCS[@]}" >&2; exit 1
 fi
+SEARCH_FUNC="${SEARCH_FUNCS[0]}"
 
 DEPLOYED_HASH=$(aws lambda get-function-configuration \
   --function-name "$SEARCH_FUNC" --profile "${AWS_PROFILE}" \
