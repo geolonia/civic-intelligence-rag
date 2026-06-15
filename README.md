@@ -3,6 +3,41 @@
 > Forked from digital-go-jp/genai-ai-api for Geolonia Civic Intelligence (CI).
 > AWS query-expansion-rag (aws/) を civic AI app の base として使用。
 > GCP (gcp/lawsy-custom-bq) と Azure (azure/genai-azure) は当面未使用、upstream 追従のため残置。
+
+## Geolonia デプロイ手順 (LawsyMigrationStack-dev)
+
+### deploy-lawsy.sh (macOS Keychain 統合)
+
+`scripts/deploy-lawsy.sh` は INCIDENT #1/#2 再発防止ラッパーです。
+macOS では 1Password Touch ID なしで LAWSY_API_KEY を取得します。
+
+#### 前提: multi-agent-shogun のインストール
+
+```bash
+# 以下のパスに multi-agent-shogun が存在すること
+ls ~/tools/multi-agent-shogun/scripts/get-secret.sh
+```
+
+#### 初回 macOS Keychain 投入手順 (殿が1回実施)
+
+1. `~/.config/keychain-sync/secrets.conf` を作成:
+   ```
+   # lawsy 秘密 (op://geonic-ops/lawsy-civic-intelligence-rag)
+   lawsy-api-key      lawsy-civic-intelligence-rag  geonic-ops  LAWSY_API_KEY
+   lawsy-api-key-hash lawsy-civic-intelligence-rag  geonic-ops  LAWSY_API_KEY_HASH
+   ```
+2. 初回投入 (1Password Touch ID 1回で Keychain にキャッシュ):
+   ```bash
+   bash ~/tools/multi-agent-shogun/scripts/sync-secrets-to-keychain.sh
+   ```
+3. 以降の deploy は Touch ID なし (login keychain 解錠中の場合)
+
+#### deploy 実行
+
+```bash
+bash scripts/deploy-lawsy.sh          # 実際に deploy
+bash scripts/deploy-lawsy.sh --dry-run # deploy せず env 確認のみ
+```
 ---
 
 日本語 | [English](README.en.md)
