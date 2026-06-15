@@ -145,9 +145,8 @@ LAWSY_API_KEY_HASH="${LAWSY_API_KEY_HASH}" \
 echo ""
 echo "✅ deploy 完了。Lambda 環境変数を検証中..."
 
-STACK_PREFIX="${STACK_NAME%-dev}"  # "LawsyMigrationStack" (strip -dev suffix)
 mapfile -t SEARCH_FUNCS < <(aws lambda list-functions --profile "${AWS_PROFILE}" \
-  --query "Functions[?starts_with(FunctionName,'${STACK_PREFIX}-') && ends_with(FunctionName,'-searchFunction')].FunctionName" \
+  --query "Functions[?starts_with(FunctionName,'${STACK_NAME}-') && ends_with(FunctionName,'-searchFunction')].FunctionName" \
   --output text 2>/dev/null | tr '\t' '\n' | grep .)
 if [ "${#SEARCH_FUNCS[@]}" -ne 1 ]; then
   echo "ERROR: Expected exactly 1 SearchLambda under ${STACK_NAME}, got ${#SEARCH_FUNCS[@]}" >&2; exit 1
